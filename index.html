@@ -61,7 +61,7 @@ const storage = {
 
 import {
   Users, Clock, BookOpen, PenLine, Plus, X, Download, Loader2, Library, Link2,
-  Settings, ArrowLeft, Archive, ArchiveRestore, Trash2, Flame, BarChart3, Network, List, Eye, Search, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Images, ImageOff, Folder, Milestone,
+  Settings, ArrowLeft, Archive, ArchiveRestore, Trash2, Flame, BarChart3, Network, List, Eye, Search, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Images, ImageOff, Folder, Milestone, Lightbulb, Layers,
 } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar,
@@ -167,6 +167,7 @@ const blankProject = (name, color, genre) => ({
   history: [],
   characterMapPositions: {},
   moodboard: [],
+  brainstorm: [],
 });
 
 const RELATIONSHIP_PRESETS = ["Family", "Love Interest"];
@@ -191,12 +192,13 @@ const normalizeProject = (data) => {
   });
   const wiki = (data.wiki || []).map((w) => ({ category: "Uncategorized", ...w }));
   const scenes = (data.scenes || []).map((s) => ({ chapter: "", ...s }));
-  return { history: [], characterMapPositions: {}, moodboard: [], ...data, characters, wiki, scenes };
+  return { history: [], characterMapPositions: {}, moodboard: [], brainstorm: [], ...data, characters, wiki, scenes };
 };
 
 const TABS = [
   { id: "characters", label: "Characters", icon: Users },
   { id: "wiki", label: "Wiki", icon: BookOpen },
+  { id: "brainstorm", label: "Brainstorm", icon: Lightbulb },
   { id: "moodboard", label: "Moodboard", icon: Images },
   { id: "timeline", label: "Timeline", icon: Clock },
   { id: "manuscript", label: "Manuscript", icon: PenLine },
@@ -327,7 +329,7 @@ export default function StoryAtelier() {
       try {
         const res = await storage.get("projects-index");
         const idx = res ? JSON.parse(res.value) : [];
-        setProjects(idx.map((p) => ({ status: "Brainstorming", archived: false, wordCount: 0, ...p })));
+        setProjects(idx.map((p) => ({ status: "Brainstorming", archived: false, wordCount: 0, series: "", ...p })));
       } catch {
         setProjects([]);
       }
@@ -476,7 +478,7 @@ export default function StoryAtelier() {
   const handleCreateProject = async () => {
     if (!newName.trim()) return;
     const id = uid();
-    const entry = { id, name: newName.trim(), color: newColor, genre: "", status: "Brainstorming", archived: false, wordCount: 0 };
+    const entry = { id, name: newName.trim(), color: newColor, genre: "", status: "Brainstorming", archived: false, wordCount: 0, series: "" };
     const data = blankProject(newName.trim(), newColor);
     const idx = [...(projects || []), entry];
     setProjects(idx);
@@ -529,6 +531,15 @@ export default function StoryAtelier() {
 
   const addWiki = (category) =>
     updateProject((p) => ({ ...p, wiki: [...p.wiki, { id: uid(), title: "New Entry", body: "", category: category || "Uncategorized" }] }));
+
+  const addBrainstormEntry = () =>
+    updateProject((p) => ({
+      ...p,
+      brainstorm: [
+        { id: uid(), title: "", date: todayISO(), body: "" },
+        ...(p.brainstorm || []),
+      ],
+    }));
 
   const addMoodboardItem = (url, caption) =>
     updateProject((p) => ({ ...p, moodboard: [...(p.moodboard || []), { id: uid(), url: url.trim(), caption: (caption || "").trim() }] }));
@@ -709,6 +720,7 @@ ${parts.join("\n")}
           addEvent={addEvent}
           insertEvent={insertEvent}
           addWiki={addWiki}
+          addBrainstormEntry={addBrainstormEntry}
           addMoodboardItem={addMoodboardItem}
           addScene={addScene}
           moveItem={moveItem}
@@ -760,6 +772,7 @@ function ShelfView({
   const active = projects.filter((p) => !p.archived);
   const archived = projects.filter((p) => p.archived);
   const editing = projects.find((p) => p.id === metaEditId);
+  const allSeries = Array.from(new Set(projects.map((p) => (p.series || "").trim()).filter(Boolean))).sort();
 
   return (
     <div className="atelier-scroll" style={{ padding: "36px 40px", flex: 1, minHeight: 0, overflowY: "auto" }}>
@@ -826,6 +839,7 @@ function ShelfView({
       {editing && (
         <MetaModal
           project={editing}
+          allSeries={allSeries}
           onClose={() => { setMetaEditId(null); setConfirmDeleteId(null); }}
           onUpdate={(patch) => onUpdateMeta(editing.id, patch)}
           confirmDelete={confirmDeleteId === editing.id}
@@ -850,18 +864,23 @@ function StatPill({ icon, value, label, highlight }) {
 
 function Spine({ p, onOpen, onEdit, dimmed }) {
   return (
-    <div style={{ position: "relative" }}>
+    <div style={{ position: "relative", display: "flex", flexDirection: "column", alignItems: "center" }}>
       <button onClick={onEdit} title="Edit" style={{ position: "absolute", top: -8, right: -8, width: 22, height: 22, borderRadius: "50%", background: COLORS.paperRaised, border: `1px solid ${COLORS.paperLine}`, color: COLORS.inkSoft, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2 }}>
         <Settings size={11} />
       </button>
       <button className="spine-face" onClick={() => onOpen(p.id)} title={p.name} style={{ writingMode: "vertical-rl", textOrientation: "mixed", background: p.color, color: COLORS.ink, border: "none", borderRadius: "3px 3px 2px 2px", width: 34, height: 130, cursor: "pointer", fontFamily: "'Fraunces', serif", fontSize: 13, fontWeight: 600, letterSpacing: "0.03em", padding: "10px 0", boxShadow: dimmed ? "none" : "0 3px 10px rgba(0,0,0,0.45)" }}>
         {p.name}
       </button>
+      {p.series && (
+        <div title={p.series} style={{ display: "flex", alignItems: "center", gap: 3, marginTop: 6, maxWidth: 70, fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, color: COLORS.inkSoft, textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <Layers size={9} style={{ flexShrink: 0 }} /> {p.series}
+        </div>
+      )}
     </div>
   );
 }
 
-function MetaModal({ project, onClose, onUpdate, confirmDelete, onAskDelete, onCancelDelete, onConfirmDelete }) {
+function MetaModal({ project, allSeries = [], onClose, onUpdate, confirmDelete, onAskDelete, onCancelDelete, onConfirmDelete }) {
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(43,42,40,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 }}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: COLORS.paperRaised, borderRadius: 8, padding: 24, width: 340, border: `1px solid ${COLORS.paperLine}` }}>
@@ -874,6 +893,15 @@ function MetaModal({ project, onClose, onUpdate, confirmDelete, onAskDelete, onC
           <select value={project.status} onChange={(e) => onUpdate({ status: e.target.value })} style={{ ...inputStyle, fontFamily: "'IBM Plex Mono', monospace", fontSize: 13 }}>
             {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
+        </Field>
+        <Field label={<span style={{ display: "flex", alignItems: "center", gap: 4 }}><Layers size={12} /> Series</span>}>
+          <CategoryField
+            value={project.series}
+            categories={allSeries}
+            emptyValue=""
+            placeholder="e.g. none, or name a series"
+            onChange={(series) => onUpdate({ series })}
+          />
         </Field>
         <Field label="Spine color">
           <div style={{ display: "flex", gap: 8 }}>
@@ -904,7 +932,7 @@ function MetaModal({ project, onClose, onUpdate, confirmDelete, onAskDelete, onC
 
 function WorkspaceView({
   project, onBack, tab, setTab, editorId, setEditorId, saveState, onRename,
-  addCharacter, addRelationship, removeRelationship, updateMapPositions, addEvent, insertEvent, addWiki, addMoodboardItem, addScene, moveItem, removeItem, patchItem, exportBible, exportManuscript,
+  addCharacter, addRelationship, removeRelationship, updateMapPositions, addEvent, insertEvent, addWiki, addBrainstormEntry, addMoodboardItem, addScene, moveItem, removeItem, patchItem, exportBible, exportManuscript,
 }) {
   if (!project) {
     return <div style={{ padding: 40 }}><BackButton onBack={onBack} /><p style={{ color: COLORS.inkSoft, marginTop: 20 }}>Couldn't find that world.</p></div>;
@@ -967,6 +995,9 @@ function WorkspaceView({
         )}
         {tab === "wiki" && (
           <WikiSection project={project} addWiki={addWiki} editorId={editorId} setEditorId={setEditorId} patchItem={patchItem} removeItem={removeItem} />
+        )}
+        {tab === "brainstorm" && (
+          <BrainstormSection project={project} addBrainstormEntry={addBrainstormEntry} editorId={editorId} setEditorId={setEditorId} patchItem={patchItem} removeItem={removeItem} moveItem={moveItem} />
         )}
         {tab === "moodboard" && (
           <MoodboardPane project={project} onAdd={addMoodboardItem} onRemove={(id) => removeItem("moodboard", id)} onMove={(id, dir) => moveItem("moodboard", id, dir)} />
@@ -1688,6 +1719,72 @@ function CategoryField({ value, categories, onChange, emptyValue = "Uncategorize
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function BrainstormSection({ project, addBrainstormEntry, editorId, setEditorId, patchItem, removeItem, moveItem }) {
+  const entries = project.brainstorm || [];
+  const selected = entries.find((e) => e.id === editorId);
+
+  return (
+    <>
+      <div className="atelier-scroll" style={{ width: 260, borderRight: `1px solid ${COLORS.paperLine}`, padding: 16, overflowY: "auto" }}>
+        <button
+          onClick={addBrainstormEntry}
+          style={{ display: "flex", alignItems: "center", gap: 6, width: "100%", justifyContent: "center", fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, padding: "8px 0", marginBottom: 12, borderRadius: 4, border: `1px dashed ${COLORS.paperLine}`, background: "transparent", color: COLORS.wine, cursor: "pointer" }}
+        >
+          <Plus size={13} /> New brainstorm
+        </button>
+        <p style={{ fontSize: 11, color: COLORS.inkSoft, fontFamily: "'IBM Plex Mono', monospace", marginTop: -4, marginBottom: 14 }}>
+          Loose ideas, questions, half-formed threads — before they're worldbuilding or a scene.
+        </p>
+        {entries.length === 0 && <p style={{ fontSize: 13, color: COLORS.inkSoft, fontStyle: "italic" }}>Nothing here yet.</p>}
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {entries.map((item) => (
+            <div key={item.id} onClick={() => setEditorId(item.id)} style={{ padding: "10px 12px", borderRadius: 5, cursor: "pointer", background: editorId === item.id ? COLORS.paper : "transparent", border: `1px solid ${editorId === item.id ? COLORS.paperLine : "transparent"}` }}>
+              <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: COLORS.wine }}>{item.date || ""}</div>
+              <div style={{ fontFamily: "'Fraunces', serif", fontSize: 15, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {item.title || (item.body ? item.body.slice(0, 40) : "Untitled")}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="atelier-scroll" style={{ flex: 1, padding: 24, overflowY: "auto" }}>
+        {selected ? (
+          <BrainstormEditor
+            key={selected.id}
+            entry={selected}
+            onPatch={(patch) => patchItem("brainstorm", selected.id, patch)}
+            onDelete={() => { removeItem("brainstorm", selected.id); setEditorId(null); }}
+          />
+        ) : (
+          <p style={{ color: COLORS.inkSoft, fontStyle: "italic" }}>Select an entry on the left, or start a new one — this is the messy, exploratory stage, no need to be tidy.</p>
+        )}
+      </div>
+    </>
+  );
+}
+
+function BrainstormEditor({ entry, onPatch, onDelete }) {
+  return (
+    <div style={{ maxWidth: 640 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start" }}>
+        <input
+          value={entry.title}
+          onChange={(e) => onPatch({ title: e.target.value })}
+          placeholder="Untitled (optional)"
+          style={{ ...inputStyle, fontFamily: "'Fraunces', serif", fontSize: 22, fontWeight: 600, border: "none", background: "transparent", padding: 0 }}
+        />
+        <button onClick={onDelete} style={{ background: "none", border: "none", color: COLORS.inkSoft, cursor: "pointer" }}><X size={16} /></button>
+      </div>
+      <Field label="Date">
+        <input type="date" value={entry.date || ""} onChange={(e) => onPatch({ date: e.target.value })} style={{ ...inputStyle, width: 170, fontFamily: "'IBM Plex Mono', monospace", fontSize: 13 }} />
+      </Field>
+      <Field label="Notes">
+        <AutoGrowTextarea value={entry.body} onChange={(e) => onPatch({ body: e.target.value })} minHeight={320} placeholder="Talk it through — questions, half-ideas, dialogue snippets, anything. Nothing here has to be right yet." />
+      </Field>
     </div>
   );
 }
