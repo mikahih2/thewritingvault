@@ -84,6 +84,38 @@ const COLORS = {
 const SPINE_COLORS = ["#C15C6E", "#93A67A", "#D3AC72", "#5B84A6", "#A6708F", "#7A9166"];
 const NODE_COLOR = "#5B84A6";
 const STATUSES = ["Brainstorming", "Drafting", "In Progress"];
+const GROUP_COLORS = ["#D3AC72", "#5B84A6", "#93A67A", "#C15C6E", "#A6708F", "#7A9166"];
+
+// Assigns a stable color to a character-group name by hashing it, so the same
+// group name always renders the same color across the list, map, and legend.
+const colorForGroup = (name) => {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
+  return GROUP_COLORS[hash % GROUP_COLORS.length];
+};
+
+// Groups a list of shelf entries into series clusters, preserving the order
+// each series first appears in. Entries with no series each become their own
+// single-item "cluster" so they render as plain standalone spines.
+function groupBySeries(list) {
+  const clusters = [];
+  const bySeriesName = new Map();
+  list.forEach((p) => {
+    const key = (p.series || "").trim();
+    if (!key) {
+      clusters.push({ series: null, projects: [p] });
+      return;
+    }
+    if (bySeriesName.has(key)) {
+      bySeriesName.get(key).projects.push(p);
+    } else {
+      const cluster = { series: key, projects: [p] };
+      bySeriesName.set(key, cluster);
+      clusters.push(cluster);
+    }
+  });
+  return clusters;
+}
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
@@ -188,7 +220,7 @@ const normalizeProject = (data) => {
     const normalized = rels.map((r) =>
       typeof r === "string" ? { id: uid(), targetId: r, label: "Linked" } : r
     );
-    return { ...c, relationships: normalized };
+    return { ...c, relationships: normalized, groups: c.groups || [] };
   });
   const wiki = (data.wiki || []).map((w) => ({ category: "Uncategorized", ...w }));
   const scenes = (data.scenes || []).map((s) => ({ chapter: "", ...s }));
@@ -196,9 +228,9 @@ const normalizeProject = (data) => {
 };
 
 const TABS = [
+  { id: "brainstorm", label: "Brainstorm", icon: Lightbulb },
   { id: "characters", label: "Characters", icon: Users },
   { id: "wiki", label: "Wiki", icon: BookOpen },
-  { id: "brainstorm", label: "Brainstorm", icon: Lightbulb },
   { id: "moodboard", label: "Moodboard", icon: Images },
   { id: "timeline", label: "Timeline", icon: Clock },
   { id: "manuscript", label: "Manuscript", icon: PenLine },
@@ -209,11 +241,42 @@ function StitchDivider() {
   return (
     <div
       style={{
-        height: 1,
+        height: 2,
         margin: "20px 0",
         backgroundImage: `repeating-linear-gradient(90deg, ${COLORS.paperLine} 0px, ${COLORS.paperLine} 6px, transparent 6px, transparent 12px)`,
+        filter: "url(#roughPaper)",
       }}
     />
+  );
+}
+
+// A loose, hand-inked squiggle used as a small decorative flourish under
+// headings — built from a wavy path and roughed up by the shared SVG filter.
+function Squiggle({ width = 150, color }) {
+  return (
+    <svg width={width} height="12" viewBox={`0 0 ${width} 12`} style={{ display: "block", filter: "url(#roughPaper)" }}>
+      <path
+        d={`M2 7 Q ${width * 0.17} 1, ${width * 0.33} 7 T ${width * 0.66} 7 T ${width - 2} 7`}
+        fill="none"
+        stroke={color || COLORS.wine}
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+// Invisible SVG holding the "hand-drawn" filter (a touch of turbulence +
+// displacement) that other decorative elements reference via filter:url(...).
+// Defining it once here keeps every sketchy line consistent.
+function DecorDefs() {
+  return (
+    <svg width="0" height="0" style={{ position: "absolute" }} aria-hidden="true">
+      <filter id="roughPaper" x="-30%" y="-30%" width="160%" height="160%">
+        <feTurbulence type="fractalNoise" baseFrequency="0.01 0.06" numOctaves="2" seed="7" result="noise" />
+        <feDisplacementMap in="SourceGraphic" in2="noise" scale="3" />
+      </filter>
+    </svg>
   );
 }
 
@@ -309,7 +372,7 @@ export default function StoryAtelier() {
   const [projects, setProjects] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const [project, setProject] = useState(null);
-  const [tab, setTab] = useState("characters");
+  const [tab, setTab] = useState("brainstorm");
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
@@ -373,7 +436,7 @@ export default function StoryAtelier() {
       }
       setProject(normalizeProject(data));
       setEditorId(null);
-      setTab("characters");
+      setTab("brainstorm");
     })();
   }, [selectedId]);
 
@@ -514,7 +577,7 @@ export default function StoryAtelier() {
   };
 
   const addCharacter = () =>
-    updateProject((p) => ({ ...p, characters: [...p.characters, { id: uid(), name: "New Character", role: "", backstory: "", traits: "", relationships: [] }] }));
+    updateProject((p) => ({ ...p, characters: [...p.characters, { id: uid(), name: "New Character", role: "", backstory: "", traits: "", relationships: [], groups: [] }] }));
 
   const addEvent = () =>
     updateProject((p) => ({ ...p, timeline: [...p.timeline, { id: uid(), title: "New Event", date: "", description: "", povCharId: "", linkedCharIds: [] }] }));
@@ -677,6 +740,7 @@ ${parts.join("\n")}
 
   return (
     <div style={outerWrap}>
+      <DecorDefs />
       <FontImport />
       {view === "shelf" ? (
         <ShelfView
@@ -737,6 +801,8 @@ ${parts.join("\n")}
 const outerWrap = {
   fontFamily: "'Source Serif 4', serif",
   background: COLORS.paper,
+  backgroundImage: "radial-gradient(rgba(237,230,212,0.035) 1px, transparent 1px)",
+  backgroundSize: "16px 16px",
   color: COLORS.ink,
   height: "100vh",
   maxHeight: "100vh",
@@ -749,6 +815,19 @@ const outerWrap = {
 
 const loadingWrap = { display: "flex", alignItems: "center", justifyContent: "center", flex: 1, color: COLORS.inkSoft };
 
+// A little wood-grained "shelf plank" that sits under each row of spines,
+// standing in for the plain divider line and giving the page an actual
+// bookshelf feel. The rough-paper filter keeps its edges from looking
+// machine-perfect.
+const shelfPlankStyle = {
+  height: 16,
+  borderRadius: 3,
+  marginTop: 2,
+  background: "linear-gradient(180deg, #6B4A34 0%, #543823 55%, #3E2A19 100%)",
+  boxShadow: "0 4px 8px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.08)",
+  filter: "url(#roughPaper)",
+};
+
 function FontImport() {
   return (
     <style>{`
@@ -756,8 +835,24 @@ function FontImport() {
       .atelier-textarea::placeholder { color: #6B6459; }
       .atelier-scroll::-webkit-scrollbar { width: 8px; }
       .atelier-scroll::-webkit-scrollbar-thumb { background: ${COLORS.paperLine}; border-radius: 4px; }
-      .spine-face { transition: transform 0.15s ease; }
-      .spine-face:hover { transform: translateY(-4px); }
+      .spine-face { transition: transform 0.15s ease; position: relative; }
+      .spine-face:hover { transform: translateY(-4px) rotate(-0.6deg); }
+      .spine-face::before, .spine-face::after {
+        content: "";
+        position: absolute;
+        left: 5px; right: 5px;
+        height: 2px;
+        background: rgba(0,0,0,0.28);
+      }
+      .spine-face::before { top: 13px; }
+      .spine-face::after { bottom: 13px; }
+      .shelf-plank { position: relative; }
+      .shelf-plank::before {
+        content: "";
+        position: absolute;
+        top: 3px; bottom: 3px; left: 10px; right: 10px;
+        background-image: repeating-linear-gradient(90deg, rgba(0,0,0,0.12) 0px, rgba(0,0,0,0.12) 1px, transparent 1px, transparent 26px);
+      }
     `}</style>
   );
 }
@@ -780,9 +875,10 @@ function ShelfView({
         <Library size={20} color={COLORS.wine} />
         <h1 style={{ fontFamily: "'Fraunces', serif", fontSize: 28, fontWeight: 700, margin: 0 }}>The Shelf</h1>
       </div>
-      <p style={{ color: COLORS.inkSoft, fontSize: 14, marginTop: 0, marginBottom: 18 }}>
+      <p style={{ color: COLORS.inkSoft, fontSize: 14, marginTop: 0, marginBottom: 8 }}>
         Every world you're building, in one place. Click a spine to open it.
       </p>
+      <div style={{ marginBottom: 18 }}><Squiggle width={150} /></div>
 
       <div style={{ display: "flex", gap: 12, marginBottom: 28 }}>
         <StatPill icon={<PenLine size={13} />} value={globalTotalWords.toLocaleString()} label="words across every world" />
@@ -796,12 +892,20 @@ function ShelfView({
       {STATUSES.map((status) => {
         const inStatus = active.filter((p) => p.status === status);
         if (inStatus.length === 0) return null;
+        const clusters = groupBySeries(inStatus);
         return (
-          <div key={status} style={{ marginBottom: 32 }}>
-            <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: COLORS.wine, marginBottom: 10 }}>{status}</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 14, alignItems: "flex-end", paddingBottom: 10, borderBottom: `3px solid ${COLORS.paperLine}` }}>
-              {inStatus.map((p) => (<Spine key={p.id} p={p} onOpen={onOpen} onEdit={() => setMetaEditId(p.id)} />))}
+          <div key={status} style={{ marginBottom: 36 }}>
+            <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: COLORS.wine, marginBottom: 12 }}>{status}</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 20, alignItems: "flex-end", paddingBottom: 16 }}>
+              {clusters.map((cluster) =>
+                cluster.series ? (
+                  <SeriesCluster key={cluster.series} series={cluster.series} projects={cluster.projects} onOpen={onOpen} onEdit={setMetaEditId} />
+                ) : (
+                  <Spine key={cluster.projects[0].id} p={cluster.projects[0]} onOpen={onOpen} onEdit={() => setMetaEditId(cluster.projects[0].id)} />
+                )
+              )}
             </div>
+            <div className="shelf-plank" style={shelfPlankStyle} />
           </div>
         );
       })}
@@ -829,8 +933,14 @@ function ShelfView({
             <Archive size={13} /> Archived ({archived.length}) {showArchived ? "▲" : "▼"}
           </button>
           {showArchived && (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginTop: 14, opacity: 0.6 }}>
-              {archived.map((p) => (<Spine key={p.id} p={p} onOpen={onOpen} onEdit={() => setMetaEditId(p.id)} dimmed />))}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 20, marginTop: 14, opacity: 0.6 }}>
+              {groupBySeries(archived).map((cluster) =>
+                cluster.series ? (
+                  <SeriesCluster key={cluster.series} series={cluster.series} projects={cluster.projects} onOpen={onOpen} onEdit={setMetaEditId} />
+                ) : (
+                  <Spine key={cluster.projects[0].id} p={cluster.projects[0]} onOpen={onOpen} onEdit={() => setMetaEditId(cluster.projects[0].id)} dimmed />
+                )
+              )}
             </div>
           )}
         </div>
@@ -862,7 +972,7 @@ function StatPill({ icon, value, label, highlight }) {
   );
 }
 
-function Spine({ p, onOpen, onEdit, dimmed }) {
+function Spine({ p, onOpen, onEdit, dimmed, hideSeriesTag }) {
   return (
     <div style={{ position: "relative", display: "flex", flexDirection: "column", alignItems: "center" }}>
       <button onClick={onEdit} title="Edit" style={{ position: "absolute", top: -8, right: -8, width: 22, height: 22, borderRadius: "50%", background: COLORS.paperRaised, border: `1px solid ${COLORS.paperLine}`, color: COLORS.inkSoft, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2 }}>
@@ -871,11 +981,68 @@ function Spine({ p, onOpen, onEdit, dimmed }) {
       <button className="spine-face" onClick={() => onOpen(p.id)} title={p.name} style={{ writingMode: "vertical-rl", textOrientation: "mixed", background: p.color, color: COLORS.ink, border: "none", borderRadius: "3px 3px 2px 2px", width: 34, height: 130, cursor: "pointer", fontFamily: "'Fraunces', serif", fontSize: 13, fontWeight: 600, letterSpacing: "0.03em", padding: "10px 0", boxShadow: dimmed ? "none" : "0 3px 10px rgba(0,0,0,0.45)" }}>
         {p.name}
       </button>
-      {p.series && (
+      {!hideSeriesTag && p.series && (
         <div title={p.series} style={{ display: "flex", alignItems: "center", gap: 3, marginTop: 6, maxWidth: 70, fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, color: COLORS.inkSoft, textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           <Layers size={9} style={{ flexShrink: 0 }} /> {p.series}
         </div>
       )}
+    </div>
+  );
+}
+
+// Wraps every book that shares a series in a single hand-drawn dashed box,
+// with a little washi-tape label pinned to the top holding the series name —
+// so instead of a tiny tag under each spine, the shelf visibly groups them.
+function SeriesCluster({ series, projects, onOpen, onEdit }) {
+  return (
+    <div
+      style={{
+        position: "relative",
+        display: "flex",
+        alignItems: "flex-end",
+        gap: 12,
+        padding: "22px 16px 8px 16px",
+        border: `2px dashed ${COLORS.paperLine}`,
+        borderRadius: 6,
+        background: "rgba(211,172,114,0.045)",
+      }}
+    >
+      <WashiLabel text={series} />
+      {projects.map((p) => (
+        <Spine key={p.id} p={p} onOpen={onOpen} onEdit={() => onEdit(p.id)} hideSeriesTag />
+      ))}
+    </div>
+  );
+}
+
+function WashiLabel({ text }) {
+  return (
+    <div
+      title={text}
+      style={{
+        position: "absolute",
+        top: -13,
+        left: 14,
+        display: "flex",
+        alignItems: "center",
+        gap: 5,
+        padding: "3px 10px",
+        background: COLORS.gold,
+        color: COLORS.paper,
+        fontFamily: "'IBM Plex Mono', monospace",
+        fontSize: 10,
+        letterSpacing: "0.03em",
+        transform: "rotate(-2deg)",
+        boxShadow: "1px 2px 4px rgba(0,0,0,0.35)",
+        borderRadius: 2,
+        opacity: 0.94,
+        maxWidth: 160,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+      }}
+    >
+      <Layers size={10} style={{ flexShrink: 0 }} /> {text}
     </div>
   );
 }
@@ -1027,10 +1194,13 @@ const exportBtnStyle = { display: "flex", alignItems: "center", gap: 5, fontFami
 
 function CharactersSection({ project, addCharacter, addRelationship, removeRelationship, updateMapPositions, editorId, setEditorId, patchItem, removeItem }) {
   const [mode, setMode] = useState("list");
+  const [groupFilter, setGroupFilter] = useState(null);
+  const allGroups = Array.from(new Set(project.characters.flatMap((c) => c.groups || []))).sort();
+  const visibleChars = groupFilter ? project.characters.filter((c) => (c.groups || []).includes(groupFilter)) : project.characters;
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 }}>
-      <div style={{ display: "flex", gap: 6, padding: "10px 16px", borderBottom: `1px solid ${COLORS.paperLine}` }}>
+      <div style={{ display: "flex", gap: 6, padding: "10px 16px", borderBottom: `1px solid ${COLORS.paperLine}`, flexWrap: "wrap", alignItems: "center" }}>
         <button
           onClick={() => setMode("list")}
           style={{ ...exportBtnStyle, background: mode === "list" ? COLORS.paper : "transparent", color: mode === "list" ? COLORS.wine : COLORS.inkSoft, borderColor: mode === "list" ? COLORS.wine : COLORS.paperLine }}
@@ -1043,14 +1213,35 @@ function CharactersSection({ project, addCharacter, addRelationship, removeRelat
         >
           <Network size={12} /> Map
         </button>
+        {mode === "list" && allGroups.length > 0 && (
+          <>
+            <div style={{ width: 1, height: 16, background: COLORS.paperLine, margin: "0 4px" }} />
+            <ChipToggle active={!groupFilter} onClick={() => setGroupFilter(null)}>All</ChipToggle>
+            {allGroups.map((g) => (
+              <ChipToggle key={g} active={groupFilter === g} onClick={() => setGroupFilter(groupFilter === g ? null : g)}>{g}</ChipToggle>
+            ))}
+          </>
+        )}
       </div>
 
       {mode === "list" ? (
         <div style={{ flex: 1, minHeight: 0, display: "flex", overflow: "hidden" }}>
           <ListPane
-            items={project.characters} onAdd={addCharacter} addLabel="New character" editorId={editorId} setEditorId={setEditorId}
-            renderCard={(c) => (<><div style={{ fontFamily: "'Fraunces', serif", fontSize: 16, fontWeight: 600 }}>{c.name}</div><div style={{ fontSize: 12, color: COLORS.inkSoft }}>{c.role || "No role set"}</div></>)}
-            renderEditor={(c) => (<CharacterEditor c={c} allChars={project.characters} onPatch={(patch) => patchItem("characters", c.id, patch)} onDelete={() => { removeItem("characters", c.id); setEditorId(null); }} onAddRelationship={(targetId, label) => addRelationship(c.id, targetId, label)} onRemoveRelationship={(relId) => removeRelationship(c.id, relId)} />)}
+            items={visibleChars} onAdd={addCharacter} addLabel="New character" editorId={editorId} setEditorId={setEditorId}
+            renderCard={(c) => (
+              <>
+                <div style={{ fontFamily: "'Fraunces', serif", fontSize: 16, fontWeight: 600 }}>{c.name}</div>
+                <div style={{ fontSize: 12, color: COLORS.inkSoft }}>{c.role || "No role set"}</div>
+                {(c.groups || []).length > 0 && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
+                    {c.groups.map((g) => (
+                      <span key={g} style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, padding: "1px 6px", borderRadius: 999, background: colorForGroup(g), color: COLORS.paper }}>{g}</span>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+            renderEditor={(c) => (<CharacterEditor c={c} allChars={project.characters} allGroups={allGroups} onPatch={(patch) => patchItem("characters", c.id, patch)} onDelete={() => { removeItem("characters", c.id); setEditorId(null); }} onAddRelationship={(targetId, label) => addRelationship(c.id, targetId, label)} onRemoveRelationship={(relId) => removeRelationship(c.id, relId)} />)}
           />
         </div>
       ) : (
@@ -1229,8 +1420,12 @@ function CharacterMap({ characters, savedPositions, onPositionsChange }) {
                 const p = positions[c.id];
                 if (!p) return null;
                 const dimmed = selectedId && selectedId !== c.id && !edges.some((e) => e.key.includes(c.id) && (e.a === selectedId || e.b === selectedId) && (e.a === c.id || e.b === c.id));
+                const primaryGroup = (c.groups && c.groups[0]) || null;
                 return (
                   <g key={c.id} opacity={dimmed ? 0.35 : 1} onMouseDown={handlePointerDown(c.id)} style={{ cursor: "grab" }}>
+                    {primaryGroup && (
+                      <circle cx={p.x} cy={p.y} r={31} fill="none" stroke={colorForGroup(primaryGroup)} strokeWidth={2.5} strokeDasharray="4 3" />
+                    )}
                     <circle cx={p.x} cy={p.y} r={26} fill={NODE_COLOR} stroke={selectedId === c.id ? COLORS.ink : "none"} strokeWidth={2} />
                     <text x={p.x} y={p.y + 4} textAnchor="middle" fontFamily="Fraunces" fontWeight={600} fontSize={11} fill={COLORS.ink}>
                       {c.name.length > 10 ? c.name.slice(0, 9) + "…" : c.name}
@@ -1242,11 +1437,19 @@ function CharacterMap({ characters, savedPositions, onPositionsChange }) {
           </svg>
         </div>
       </div>
-      <div style={{ width: 160, padding: 16, borderLeft: `1px solid ${COLORS.paperLine}` }}>
+      <div style={{ width: 170, padding: 16, borderLeft: `1px solid ${COLORS.paperLine}` }}>
         <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, textTransform: "uppercase", color: COLORS.inkSoft, marginBottom: 10 }}>Legend</div>
         <LegendRow color={COLORS.sage} label="Family" />
         <LegendRow color={COLORS.wine} label="Love Interest" />
         <LegendRow color={COLORS.gold} label="Custom" />
+        {Array.from(new Set(characters.flatMap((c) => c.groups || []))).length > 0 && (
+          <>
+            <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, textTransform: "uppercase", color: COLORS.inkSoft, margin: "14px 0 10px" }}>Groups</div>
+            {Array.from(new Set(characters.flatMap((c) => c.groups || []))).map((g) => (
+              <LegendRow key={g} color={colorForGroup(g)} label={g} />
+            ))}
+          </>
+        )}
       </div>
     </div>
   );
@@ -1311,7 +1514,7 @@ function ListPane({ items, onAdd, addLabel, editorId, setEditorId, renderCard, r
   );
 }
 
-function CharacterEditor({ c, allChars, onPatch, onDelete, onAddRelationship, onRemoveRelationship }) {
+function CharacterEditor({ c, allChars, allGroups = [], onPatch, onDelete, onAddRelationship, onRemoveRelationship }) {
   const others = allChars.filter((x) => x.id !== c.id);
   return (
     <div style={{ maxWidth: 560 }}>
@@ -1324,9 +1527,64 @@ function CharacterEditor({ c, allChars, onPatch, onDelete, onAddRelationship, on
       <Field label="Backstory">
         <AutoGrowTextarea value={c.backstory} onChange={(e) => onPatch({ backstory: e.target.value })} minHeight={140} placeholder="As short or long as you need." />
       </Field>
+      <Field label={<span style={{ display: "flex", alignItems: "center", gap: 4 }}><Users size={12} /> Groups</span>}>
+        <GroupTagEditor groups={c.groups} allGroups={allGroups} onChange={(groups) => onPatch({ groups })} />
+      </Field>
       <Field label={<span style={{ display: "flex", alignItems: "center", gap: 4 }}><Link2 size={12} /> Relationships</span>}>
         <RelationshipEditor c={c} others={others} onAdd={onAddRelationship} onRemove={onRemoveRelationship} />
       </Field>
+    </div>
+  );
+}
+
+// Free-form, multi-value tagging for teams, courts, houses, companies —
+// anything you'd want to visibly cluster characters by. Suggests group names
+// already used elsewhere in this project so tags stay consistent.
+function GroupTagEditor({ groups, allGroups, onChange }) {
+  const [text, setText] = useState("");
+  const current = groups || [];
+
+  const add = (g) => {
+    const clean = (g || "").trim();
+    if (!clean || current.includes(clean)) return;
+    onChange([...current, clean]);
+    setText("");
+  };
+  const remove = (g) => onChange(current.filter((x) => x !== g));
+  const suggestions = (allGroups || []).filter((g) => !current.includes(g));
+
+  return (
+    <div>
+      <p style={{ fontSize: 11, color: COLORS.inkSoft, fontFamily: "'IBM Plex Mono', monospace", marginTop: -4, marginBottom: 10 }}>
+        Tag a team, court, house, or company — anyone sharing a tag will cluster together in the map view.
+      </p>
+      {current.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+          {current.map((g) => (
+            <span key={g} style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, padding: "4px 6px 4px 10px", borderRadius: 999, background: colorForGroup(g), color: COLORS.paper }}>
+              {g}
+              <button onClick={() => remove(g)} style={{ background: "none", border: "none", color: COLORS.paper, cursor: "pointer", display: "flex", padding: 0 }}><X size={12} /></button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        <input
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && add(text)}
+          placeholder="e.g. Court of Shadows"
+          style={{ ...inputStyle, fontSize: 13, width: 200 }}
+        />
+        <button onClick={() => add(text)} style={exportBtnStyle}>Add</button>
+      </div>
+      {suggestions.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+          {suggestions.map((g) => (
+            <button key={g} onClick={() => add(g)} style={{ ...exportBtnStyle, color: colorForGroup(g), borderColor: colorForGroup(g) }}>+ {g}</button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
