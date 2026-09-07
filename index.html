@@ -1,4 +1,21 @@
 
+/
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 Index · HTML
 <!doctype html>
@@ -50,7 +67,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import ReactDOM from "react-dom/client";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
 import {
-  getAuth, GoogleAuthProvider, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut as firebaseSignOut,
+  getAuth, GoogleAuthProvider, signInWithRedirect, signInWithPopup, getRedirectResult, onAuthStateChanged, signOut as firebaseSignOut,
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
 import {
   getFirestore, doc, getDoc, setDoc, deleteDoc, collection, getDocs,
@@ -320,6 +337,26 @@ function groupBySeries(list) {
     }
   });
   return clusters;
+}
+ 
+// Turns a Firebase Auth error into something a non-developer can actually
+// act on, since the raw error codes (and Firebase's own messages) are either
+// silent or too technical to show directly in the UI.
+function describeAuthError(e) {
+  const code = e && e.code;
+  if (code === "auth/unauthorized-domain") {
+    return "This site's address isn't approved for sign-in yet in the Firebase project settings.";
+  }
+  if (code === "auth/network-request-failed") {
+    return "Sign-in couldn't reach Google — check your connection and try again.";
+  }
+  if (code === "auth/popup-blocked") {
+    return "Your browser blocked the sign-in popup. Try allowing popups for this site, or reload and try again.";
+  }
+  if (code === "auth/operation-not-supported-in-this-environment") {
+    return "Google sign-in isn't supported in this browser view. Try opening the site directly in Chrome or Safari (not from within another app).";
+  }
+  return "Sign-in didn't complete. Please try again.";
 }
  
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -779,6 +816,7 @@ export default function StoryAtelier() {
   const [activeIntro, setActiveIntro] = useState(null);
   const [user, setUser] = useState(null);
   const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState("");
   const skipFetchRef = useRef(false);
   const saveTimerRef = useRef(null);
   const pendingSaveRef = useRef(null);
@@ -827,12 +865,17 @@ export default function StoryAtelier() {
   // storage. Either way, data reloads right after so the shelf reflects
   // whichever source is now active.
   useEffect(() => {
-    getRedirectResult(auth).catch((e) => console.error("Sign-in redirect error", e));
+    getRedirectResult(auth).catch((e) => {
+      console.error("Sign-in redirect error", e);
+      setAuthError(describeAuthError(e));
+      setAuthBusy(false);
+    });
     const unsub = onAuthStateChanged(auth, async (fbUser) => {
       setAuthBusy(false);
       if (fbUser) {
         currentUid = fbUser.uid;
         setUser({ uid: fbUser.uid, name: fbUser.displayName, email: fbUser.email, photo: fbUser.photoURL });
+        setAuthError("");
         const migratedFlag = `migrated-${fbUser.uid}`;
         if (!localStorage.getItem(migratedFlag)) {
           await migrateLocalDataToCloud(fbUser.uid);
@@ -847,12 +890,30 @@ export default function StoryAtelier() {
     return () => unsub();
   }, [loadAllData]);
  
-  const handleSignIn = () => {
+  // Popup rather than a full-page redirect: it's more reliable for sign-in
+  // on a site installed to the home screen as an app, where a redirect can
+  // sometimes leave the sign-in half-finished with no visible error at all.
+  // Falls back to a redirect only if the browser actively blocks the popup.
+  const handleSignIn = async () => {
     setAuthBusy(true);
-    signInWithRedirect(auth, new GoogleAuthProvider()).catch((e) => {
+    setAuthError("");
+    try {
+      await signInWithPopup(auth, new GoogleAuthProvider());
+    } catch (e) {
       console.error("Sign-in failed", e);
+      if (e && (e.code === "auth/popup-blocked" || e.code === "auth/operation-not-supported-in-this-environment")) {
+        try {
+          await signInWithRedirect(auth, new GoogleAuthProvider());
+          return; // page will navigate away; getRedirectResult handles the rest on return
+        } catch (e2) {
+          console.error("Redirect fallback also failed", e2);
+          setAuthError(describeAuthError(e2));
+        }
+      } else if (e && e.code !== "auth/popup-closed-by-user" && e.code !== "auth/cancelled-popup-request") {
+        setAuthError(describeAuthError(e));
+      }
       setAuthBusy(false);
-    });
+    }
   };
  
   const handleSignOut = () => {
@@ -1265,7 +1326,7 @@ ${parts.join("\n")}
       <FontImport />
       <button
         onClick={() => setShowSettings(true)}
-        title="Settings"
+        title={user ? `Signed in as ${user.email}` : "Not signed in — tap for Settings"}
         style={{
           position: "absolute", top: 14, right: 16, zIndex: 20,
           display: "flex", alignItems: "center", justifyContent: "center",
@@ -1275,6 +1336,16 @@ ${parts.join("\n")}
         }}
       >
         <Settings size={14} />
+        {/* Small always-visible dot: green when actually signed in and
+            synced to the cloud, otherwise a dim outline — so sign-in status
+            is visible at a glance without opening Settings. */}
+        <span
+          style={{
+            position: "absolute", top: -2, right: -2, width: 9, height: 9, borderRadius: "50%",
+            background: user ? COLORS.sage : "transparent",
+            border: `1.5px solid ${user ? COLORS.paperRaised : COLORS.inkSoft}`,
+          }}
+        />
       </button>
       {showSettings && (
         <SettingsModal
@@ -1283,6 +1354,7 @@ ${parts.join("\n")}
           onResetTutorial={resetTutorial}
           user={user}
           authBusy={authBusy}
+          authError={authError}
           onSignIn={handleSignIn}
           onSignOut={handleSignOut}
           onClose={() => setShowSettings(false)}
@@ -1687,7 +1759,7 @@ function QuickCaptureModal({ onSave, onClose }) {
   );
 }
  
-function SettingsModal({ theme, onChangeTheme, onResetTutorial, user, authBusy, onSignIn, onSignOut, onClose }) {
+function SettingsModal({ theme, onChangeTheme, onResetTutorial, user, authBusy, authError, onSignIn, onSignOut, onClose }) {
   const OptionCard = ({ value, label, sub, swatchBg, swatchInk }) => {
     const active = theme === value;
     return (
@@ -1753,6 +1825,9 @@ function SettingsModal({ theme, onChangeTheme, onResetTutorial, user, authBusy, 
             {authBusy ? <Loader2 size={14} className="animate-spin" /> : <svg width="14" height="14" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.9-2.26 5.36-4.78 7.02l7.73 6c4.51-4.18 7.09-10.36 7.09-17.49z"/><path fill="#FBBC05" d="M10.53 28.59A14.5 14.5 0 0 1 9.5 24c0-1.59.27-3.13.76-4.59l-7.98-6.19A23.94 23.94 0 0 0 0 24c0 3.86.92 7.51 2.56 10.78z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>}
             {authBusy ? "Signing in…" : "Sign in with Google"}
           </button>
+        )}
+        {authError && !user && (
+          <p style={{ fontSize: 12, color: COLORS.wine, marginTop: 0, marginBottom: 8, lineHeight: 1.4 }}>{authError}</p>
         )}
         <p style={{ fontSize: 12, color: COLORS.inkSoft, marginTop: 0, marginBottom: 18 }}>
           {user
@@ -3183,4 +3258,3 @@ ReactDOM.createRoot(document.getElementById("root")).render(<StoryAtelier />);
 </body>
 </html>
  
-
