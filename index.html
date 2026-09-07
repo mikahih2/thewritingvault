@@ -1,23 +1,3 @@
-
-/
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-Index · HTML
 <!doctype html>
 <html lang="en">
 <head>
@@ -35,7 +15,7 @@ Index · HTML
   body { background: #1B1916; font-family: sans-serif; }
   #loading-note { color: #9C9284; text-align: center; padding-top: 40vh; }
 </style>
- 
+
 <!-- Pins every package to one shared copy so React doesn't get loaded twice
      (a common cause of broken hooks in no-build setups like this one). -->
 <script type="importmap">
@@ -50,7 +30,7 @@ Index · HTML
   }
 }
 </script>
- 
+
 <!-- Babel Standalone converts the JSX below into plain JavaScript right in
      the browser, on page load. This is what removes the need for a build
      step (npm run build) or a terminal at all -- the tradeoff is a slightly
@@ -61,7 +41,7 @@ Index · HTML
 </head>
 <body>
 <div id="root"><p id="loading-note">Loading Story Atelier…</p></div>
- 
+
 <script type="text/babel" data-type="module" data-presets="react">
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import ReactDOM from "react-dom/client";
@@ -72,7 +52,7 @@ import {
 import {
   getFirestore, doc, getDoc, setDoc, deleteDoc, collection, getDocs,
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
- 
+
 const firebaseConfig = {
   apiKey: "AIzaSyB5jm1KjkwDi3h8NfqnkWF2OFptJMH8X9A",
   authDomain: "the-writing-vault.firebaseapp.com",
@@ -84,13 +64,13 @@ const firebaseConfig = {
 const firebaseApp = initializeApp(firebaseConfig);
 const auth = getAuth(firebaseApp);
 const db = getFirestore(firebaseApp);
- 
+
 // Which backend `storage` below talks to. Stays null for guest/local-only
 // use; gets set to the signed-in Firebase user's uid so every project synced
 // through the same Google account lands in the same place regardless of
 // which device (phone, desktop) is writing it.
 let currentUid = null;
- 
+
 const localBackend = {
   async get(key) {
     const value = localStorage.getItem(key);
@@ -106,7 +86,7 @@ const localBackend = {
     return { key, deleted: true };
   },
 };
- 
+
 const cloudBackend = {
   async get(key) {
     const snap = await getDoc(doc(db, "users", currentUid, "kv", key));
@@ -122,7 +102,7 @@ const cloudBackend = {
     return { key, deleted: true };
   },
 };
- 
+
 // A drop-in replacement for the Claude-artifact storage API. Every call site
 // in the app below just calls storage.get/set/delete as before — which
 // backend actually handles it is decided per-call by whether someone's
@@ -132,7 +112,7 @@ const storage = {
   async set(key, value) { return currentUid ? cloudBackend.set(key, value) : localBackend.set(key, value); },
   async delete(key) { return currentUid ? cloudBackend.delete(key) : localBackend.delete(key); },
 };
- 
+
 // Runs once, the first time a given Google account signs in on this device:
 // copies whatever's already saved locally (this project, this browser) up
 // into that account's cloud storage, so nothing already written is lost.
@@ -164,7 +144,7 @@ async function migrateLocalDataToCloud(uid) {
       console.error("Migration failed for projects-index", e);
     }
   }
- 
+
   // activity-log: merge by date, so the writing streak reflects days written
   // on either device instead of just whichever device migrated last.
   const rawLog = localStorage.getItem("activity-log");
@@ -181,7 +161,7 @@ async function migrateLocalDataToCloud(uid) {
       console.error("Migration failed for activity-log", e);
     }
   }
- 
+
   // theme / seen-intros: per-device preferences. Only seed the cloud with
   // these the first time an account has none at all — never overwrite a
   // preference another device already set.
@@ -196,7 +176,7 @@ async function migrateLocalDataToCloud(uid) {
       console.error("Migration failed for key", key, e);
     }
   }
- 
+
   // individual project: keys — only upload ones the cloud doesn't already
   // have under this id, so an existing cloud project's content is never
   // clobbered by an older local copy of the same id.
@@ -217,7 +197,7 @@ async function migrateLocalDataToCloud(uid) {
     }
   }
 }
- 
+
 // Self-healing recovery for accounts that already hit the old overwrite bug:
 // a project's own document can still exist in Firestore even if an earlier
 // migration dropped its id from the projects-index. This scans every saved
@@ -254,7 +234,7 @@ async function recoverOrphanedProjects(uid, idx) {
     return idx;
   }
 }
- 
+
 import {
   Users, Clock, BookOpen, PenLine, Plus, X, Download, Loader2, Library, Link2,
   Settings, ArrowLeft, Archive, ArchiveRestore, Trash2, Flame, BarChart3, Network, List, Eye, Search, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Images, ImageOff, Folder, Milestone, Lightbulb, Layers,
@@ -263,7 +243,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar,
 } from "recharts";
 import * as d3 from "d3";
- 
+
 const DARK_COLORS = {
   ink: "#EDE6D4",
   inkSoft: "#9C9284",
@@ -277,7 +257,7 @@ const DARK_COLORS = {
   gold: "#D3AC72",
   paperDot: "rgba(237,230,212,0.035)",
 };
- 
+
 const LIGHT_COLORS = {
   ink: "#2B2620",
   inkSoft: "#7A7266",
@@ -291,7 +271,7 @@ const LIGHT_COLORS = {
   gold: "#9C7A3F",
   paperDot: "rgba(43,38,32,0.045)",
 };
- 
+
 // A mutable palette object — its properties get swapped out (not the object
 // reference itself) when the theme changes, so every render-time COLORS.xxx
 // lookup across the app picks up the new values automatically. A handful of
@@ -302,12 +282,12 @@ const COLORS = { ...DARK_COLORS };
 function applyTheme(name) {
   Object.assign(COLORS, name === "light" ? LIGHT_COLORS : DARK_COLORS);
 }
- 
+
 const SPINE_COLORS = ["#C15C6E", "#93A67A", "#D3AC72", "#5B84A6", "#A6708F", "#7A9166"];
 const NODE_COLOR = "#5B84A6";
 const STATUSES = ["Brainstorming", "Drafting", "In Progress"];
 const GROUP_COLORS = ["#D3AC72", "#5B84A6", "#93A67A", "#C15C6E", "#A6708F", "#7A9166"];
- 
+
 // Assigns a stable color to a character-group name by hashing it, so the same
 // group name always renders the same color across the list, map, and legend.
 const colorForGroup = (name) => {
@@ -315,7 +295,7 @@ const colorForGroup = (name) => {
   for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
   return GROUP_COLORS[hash % GROUP_COLORS.length];
 };
- 
+
 // Groups a list of shelf entries into series clusters, preserving the order
 // each series first appears in. Entries with no series each become their own
 // single-item "cluster" so they render as plain standalone spines.
@@ -338,7 +318,7 @@ function groupBySeries(list) {
   });
   return clusters;
 }
- 
+
 // Turns a Firebase Auth error into something a non-developer can actually
 // act on, since the raw error codes (and Firebase's own messages) are either
 // silent or too technical to show directly in the UI.
@@ -358,9 +338,9 @@ function describeAuthError(e) {
   }
   return "Sign-in didn't complete. Please try again.";
 }
- 
+
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
- 
+
 // Downscales and compresses an image file/blob to a reasonably small JPEG data
 // URL, so uploaded or pasted moodboard photos don't bloat storage. Uses
 // FileReader (data: URLs) rather than URL.createObjectURL (blob: URLs), since
@@ -410,7 +390,7 @@ const localISO = (d) => {
 const todayISO = () => localISO(new Date());
 const countWords = (t) => (t && t.trim() ? t.trim().split(/\s+/).length : 0);
 const totalWordsForProject = (p) => (p.scenes || []).reduce((sum, s) => sum + countWords(s.content), 0);
- 
+
 function computeStreak(log) {
   if (!log) return 0;
   const day = 24 * 60 * 60 * 1000;
@@ -429,7 +409,7 @@ function computeStreak(log) {
   }
   return count;
 }
- 
+
 const blankProject = (name, color, genre) => ({
   name,
   color,
@@ -443,16 +423,16 @@ const blankProject = (name, color, genre) => ({
   moodboard: [],
   brainstorm: [],
 });
- 
+
 const RELATIONSHIP_PRESETS = ["Family", "Love Interest"];
- 
+
 const relationshipColor = (label) => {
   const l = (label || "").toLowerCase();
   if (l === "family") return COLORS.sage;
   if (l === "love interest") return COLORS.wine;
   return COLORS.gold;
 };
- 
+
 // Migrates older saved data where relationships were just an array of character ids
 // into the newer { id, targetId, label } shape.
 const normalizeProject = (data) => {
@@ -468,7 +448,7 @@ const normalizeProject = (data) => {
   const scenes = (data.scenes || []).map((s) => ({ chapter: "", ...s }));
   return { history: [], characterMapPositions: {}, moodboard: [], brainstorm: [], ...data, characters, wiki, scenes };
 };
- 
+
 const TABS = [
   { id: "brainstorm", label: "Brainstorm", icon: Lightbulb },
   { id: "characters", label: "Characters", icon: Users },
@@ -478,7 +458,7 @@ const TABS = [
   { id: "manuscript", label: "Manuscript", icon: PenLine },
   { id: "analytics", label: "Analytics", icon: BarChart3 },
 ];
- 
+
 function StitchDivider() {
   return (
     <div
@@ -491,7 +471,7 @@ function StitchDivider() {
     />
   );
 }
- 
+
 // A loose, hand-inked squiggle used as a small decorative flourish under
 // headings — built from a wavy path and roughed up by the shared SVG filter.
 function Squiggle({ width = 150, color }) {
@@ -507,7 +487,7 @@ function Squiggle({ width = 150, color }) {
     </svg>
   );
 }
- 
+
 // Invisible SVG holding the "hand-drawn" filter (a touch of turbulence +
 // displacement) that other decorative elements reference via filter:url(...).
 // Defining it once here keeps every sketchy line consistent.
@@ -521,7 +501,7 @@ function DecorDefs() {
     </svg>
   );
 }
- 
+
 // A simple, flat, hand-drawn bookworm — thick ink outlines, flat colors, no
 // gradients or shading, wobbled slightly by the app's own "roughPaper" filter
 // so he matches the sketchy, doodled feel of the rest of the illustration
@@ -538,35 +518,35 @@ function BookwormMascot({ size = 44, idPrefix = "worm" }) {
           <feDisplacementMap in="SourceGraphic" in2="noise" scale="1.6" />
         </filter>
       </defs>
- 
+
       <g filter={`url(#${roughId})`} strokeLinecap="round" strokeLinejoin="round">
         {/* tail, two simple round bumps */}
         <circle cx="34" cy="86" r="14" fill={COLORS.sageSoft} stroke={INK_LINE} strokeWidth="3" />
         <circle cx="28" cy="64" r="15.5" fill={COLORS.sage} stroke={INK_LINE} strokeWidth="3" />
- 
+
         {/* head, one simple circle */}
         <circle cx="58" cy="40" r="27" fill={COLORS.gold} stroke={INK_LINE} strokeWidth="3" />
- 
+
         {/* small curved antenna */}
         <path d="M62 15 Q68 4 60 2" fill="none" stroke={INK_LINE} strokeWidth="2.6" />
         <circle cx="60" cy="2" r="2.6" fill={COLORS.sage} stroke={INK_LINE} strokeWidth="2" />
- 
+
         {/* simple round glasses, no lenses filled in */}
         <circle cx="48" cy="40" r="9" fill="none" stroke={INK_LINE} strokeWidth="2.6" />
         <circle cx="69" cy="40" r="9" fill="none" stroke={INK_LINE} strokeWidth="2.6" />
         <line x1="57" y1="40" x2="60" y2="40" stroke={INK_LINE} strokeWidth="2.6" />
- 
+
         {/* small friendly dot eyes, sitting inside the glasses */}
         <circle cx="48" cy="41" r="2.6" fill={INK_LINE} />
         <circle cx="69" cy="41" r="2.6" fill={INK_LINE} />
- 
+
         {/* blush */}
         <circle cx="40" cy="49" r="3" fill={COLORS.wineSoft} opacity="0.8" />
         <circle cx="77" cy="49" r="3" fill={COLORS.wineSoft} opacity="0.8" />
- 
+
         {/* small closed smile */}
         <path d="M52 52 Q58.5 57 65 52" fill="none" stroke={INK_LINE} strokeWidth="2.6" />
- 
+
         {/* little book resting against the tummy */}
         <g transform="translate(42, 58) rotate(-3)">
           <rect x="0" y="0" width="26" height="18" rx="1.5" fill={COLORS.wine} stroke={INK_LINE} strokeWidth="2.6" />
@@ -576,7 +556,7 @@ function BookwormMascot({ size = 44, idPrefix = "worm" }) {
     </svg>
   );
 }
- 
+
 // What the bookworm walks a new writer through on each page. Keys match
 // TABS ids, plus "shelf" for the landing page. Each has a short framing line
 // and concrete, ordered steps — this is meant to be a real mini-walkthrough,
@@ -655,7 +635,7 @@ const PAGE_INTROS = {
     ],
   },
 };
- 
+
 function GuideModal({ pageKey, onClose }) {
   const info = PAGE_INTROS[pageKey];
   if (!info) return null;
@@ -700,9 +680,9 @@ function GuideModal({ pageKey, onClose }) {
     </div>
   );
 }
- 
+
 function Field({ label, children }) {
- 
+
   return (
     <div style={{ marginBottom: 16 }}>
       <div
@@ -721,7 +701,7 @@ function Field({ label, children }) {
     </div>
   );
 }
- 
+
 function getInputStyle() {
   return {
     width: "100%",
@@ -735,7 +715,7 @@ function getInputStyle() {
     outline: "none",
   };
 }
- 
+
 function ChipToggle({ active, onClick, children }) {
   return (
     <button
@@ -757,21 +737,21 @@ function ChipToggle({ active, onClick, children }) {
     </button>
   );
 }
- 
+
 function AutoGrowTextarea({ value, onChange, placeholder, minHeight = 100, style, autoFocus, onKeyDown }) {
   const ref = useRef(null);
- 
+
   const resize = useCallback(() => {
     const el = ref.current;
     if (!el) return;
     el.style.height = "auto";
     el.style.height = Math.max(el.scrollHeight, minHeight) + "px";
   }, [minHeight]);
- 
+
   useEffect(() => {
     resize();
   }, [value, resize]);
- 
+
   return (
     <textarea
       ref={ref}
@@ -792,7 +772,7 @@ function AutoGrowTextarea({ value, onChange, placeholder, minHeight = 100, style
     />
   );
 }
- 
+
 export default function StoryAtelier() {
   const [view, setView] = useState("shelf");
   const [projects, setProjects] = useState(null);
@@ -820,7 +800,7 @@ export default function StoryAtelier() {
   const skipFetchRef = useRef(false);
   const saveTimerRef = useRef(null);
   const pendingSaveRef = useRef(null);
- 
+
   const loadAllData = useCallback(async () => {
     try {
       const res = await storage.get("projects-index");
@@ -858,7 +838,7 @@ export default function StoryAtelier() {
     }
     setLoading(false);
   }, []);
- 
+
   // Watches Google sign-in state. Signing in points `storage` at this
   // account's cloud data (migrating anything already on this device up
   // there, the first time); signing out points it back at local-only
@@ -889,7 +869,7 @@ export default function StoryAtelier() {
     });
     return () => unsub();
   }, [loadAllData]);
- 
+
   // Popup rather than a full-page redirect: it's more reliable for sign-in
   // on a site installed to the home screen as an app, where a redirect can
   // sometimes leave the sign-in half-finished with no visible error at all.
@@ -915,11 +895,11 @@ export default function StoryAtelier() {
       setAuthBusy(false);
     }
   };
- 
+
   const handleSignOut = () => {
     firebaseSignOut(auth).catch((e) => console.error("Sign-out failed", e));
   };
- 
+
   // The bookworm's tip for the current page pops up the first time you visit
   // it on this device, then stays quiet — reopen it anytime via the mascot.
   useEffect(() => {
@@ -927,7 +907,7 @@ export default function StoryAtelier() {
     const key = view === "shelf" ? "shelf" : tab;
     if (!seenIntros[key]) setActiveIntro(key);
   }, [view, tab, loading]);
- 
+
   const dismissIntro = () => {
     const key = activeIntro;
     setActiveIntro(null);
@@ -938,9 +918,9 @@ export default function StoryAtelier() {
       return next;
     });
   };
- 
+
   const showCurrentIntro = () => setActiveIntro(view === "shelf" ? "shelf" : tab);
- 
+
   // Clears every "already seen" flag so the walkthrough pops up again on
   // every page, like a first-time visit — and immediately shows the current
   // page's tip as a bit of confirmation that it worked.
@@ -950,13 +930,13 @@ export default function StoryAtelier() {
     setShowSettings(false);
     setActiveIntro(view === "shelf" ? "shelf" : tab);
   };
- 
+
   const changeTheme = (name) => {
     applyTheme(name);
     setThemeState(name);
     storage.set("theme", name).catch((e) => console.error("Failed to save theme", e));
   };
- 
+
   // Drops a raw idea straight into the current project's Brainstorm list from
   // wherever you happen to be — no need to navigate to the Brainstorm tab
   // first. Deliberately doesn't touch `tab` or `editorId`, so whatever you
@@ -971,8 +951,8 @@ export default function StoryAtelier() {
       ],
     }));
   };
- 
- 
+
+
   useEffect(() => {
     if (!selectedId) {
       setProject(null);
@@ -1006,7 +986,7 @@ export default function StoryAtelier() {
       setTab("brainstorm");
     })();
   }, [selectedId]);
- 
+
   const persistIndex = useCallback(async (idx) => {
     const write = () => storage.set("projects-index", JSON.stringify(idx));
     try {
@@ -1021,7 +1001,7 @@ export default function StoryAtelier() {
       }
     }
   }, []);
- 
+
   const persistProject = useCallback(async (id, data) => {
     setSaveState("saving");
     const write = () => storage.set(`project:${id}`, JSON.stringify(data));
@@ -1044,7 +1024,7 @@ export default function StoryAtelier() {
       setSaveState("error");
     }
   }, []);
- 
+
   const updateIndexEntry = useCallback((id, patch) => {
     setProjects((idx) => {
       const next = (idx || []).map((p) => (p.id === id ? { ...p, ...patch } : p));
@@ -1052,7 +1032,7 @@ export default function StoryAtelier() {
       return next;
     });
   }, [persistIndex]);
- 
+
   const touchActivity = useCallback(async () => {
     const today = todayISO();
     setActivityLog((prev) => {
@@ -1062,7 +1042,7 @@ export default function StoryAtelier() {
       return next;
     });
   }, []);
- 
+
   const runPendingSave = useCallback(() => {
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current);
@@ -1074,7 +1054,7 @@ export default function StoryAtelier() {
       fn();
     }
   }, []);
- 
+
   // updater: (prev) => next ; touchesManuscript: whether this edit should count toward the writing streak
   const updateProject = (updater, touchesManuscript = false) => {
     setProject((prev) => {
@@ -1086,7 +1066,7 @@ export default function StoryAtelier() {
       if (idx >= 0) history[idx] = { date: today, words };
       else history.push({ date: today, words });
       next = { ...next, history };
- 
+
       // Debounce the actual write: typing fires this constantly, and writing on
       // every keystroke can trip storage rate limits. We save ~700ms after the
       // last change instead, so a burst of typing becomes one write. The writes
@@ -1100,11 +1080,11 @@ export default function StoryAtelier() {
       setSaveState("saving");
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       saveTimerRef.current = setTimeout(runPendingSave, 700);
- 
+
       return next;
     });
   };
- 
+
   const handleCreateProject = async () => {
     if (!newName.trim()) return;
     const id = uid();
@@ -1117,19 +1097,19 @@ export default function StoryAtelier() {
     setNewName("");
     setCreating(false);
   };
- 
+
   const openProject = (id) => {
     setSelectedId(id);
     setView("workspace");
   };
- 
+
   const backToShelf = () => {
     runPendingSave();
     setView("shelf");
     setSelectedId(null);
     setMetaEditId(null);
   };
- 
+
   const handleDelete = async (id) => {
     const idx = (projects || []).filter((p) => p.id !== id);
     setProjects(idx);
@@ -1142,19 +1122,19 @@ export default function StoryAtelier() {
     setConfirmDeleteId(null);
     setMetaEditId(null);
   };
- 
+
   const addCharacter = () => {
     const id = uid();
     updateProject((p) => ({ ...p, characters: [...p.characters, { id, name: "", role: "", backstory: "", traits: "", relationships: [], groups: [] }] }));
     setEditorId(id);
   };
- 
+
   const addEvent = () => {
     const id = uid();
     updateProject((p) => ({ ...p, timeline: [...p.timeline, { id, title: "", date: "", description: "", povCharId: "", linkedCharIds: [] }] }));
     setEditorId(id);
   };
- 
+
   const insertEvent = (index) => {
     const newId = uid();
     updateProject((p) => {
@@ -1164,13 +1144,13 @@ export default function StoryAtelier() {
     });
     setEditorId(newId);
   };
- 
+
   const addWiki = (category) => {
     const id = uid();
     updateProject((p) => ({ ...p, wiki: [...p.wiki, { id, title: "", body: "", category: category || "Uncategorized" }] }));
     setEditorId(id);
   };
- 
+
   const addBrainstormEntry = () => {
     const id = uid();
     updateProject((p) => ({
@@ -1182,16 +1162,16 @@ export default function StoryAtelier() {
     }));
     setEditorId(id);
   };
- 
+
   const addMoodboardItem = (url, caption) =>
     updateProject((p) => ({ ...p, moodboard: [...(p.moodboard || []), { id: uid(), url: url.trim(), caption: (caption || "").trim() }] }));
- 
+
   const addScene = (chapter) => {
     const id = uid();
     updateProject((p) => ({ ...p, scenes: [...p.scenes, { id, title: `Scene ${p.scenes.length + 1}`, content: "", chapter: chapter || "" }] }), true);
     setEditorId(id);
   };
- 
+
   const moveItem = (collection, id, direction) =>
     updateProject((p) => {
       const items = [...p[collection]];
@@ -1201,7 +1181,7 @@ export default function StoryAtelier() {
       [items[idx], items[newIdx]] = [items[newIdx], items[idx]];
       return { ...p, [collection]: items };
     });
- 
+
   const removeItem = (collection, id) =>
     updateProject((p) => {
       const next = { ...p, [collection]: p[collection].filter((x) => x.id !== id) };
@@ -1220,10 +1200,10 @@ export default function StoryAtelier() {
       }
       return next;
     }, collection === "scenes");
- 
+
   const patchItem = (collection, id, patch) =>
     updateProject((p) => ({ ...p, [collection]: p[collection].map((x) => (x.id === id ? { ...x, ...patch } : x)) }), collection === "scenes");
- 
+
   // Relationships are mirrored: adding "Callum — Love Interest" on Jo also adds
   // "Jo — Love Interest" on Callum. Both entries share a pairId so removing
   // either side removes both.
@@ -1237,7 +1217,7 @@ export default function StoryAtelier() {
       });
       return { ...p, characters };
     });
- 
+
   const removeRelationship = (characterId, relId) =>
     updateProject((p) => {
       const char = p.characters.find((c) => c.id === characterId);
@@ -1250,10 +1230,10 @@ export default function StoryAtelier() {
       }));
       return { ...p, characters };
     });
- 
+
   const updateMapPositions = (positions) =>
     updateProject((p) => ({ ...p, characterMapPositions: positions }));
- 
+
   const download = (filename, text, mime = "text/plain") => {
     const blob = new Blob(["\ufeff", text], { type: mime });
     const url = URL.createObjectURL(blob);
@@ -1263,9 +1243,9 @@ export default function StoryAtelier() {
     a.click();
     URL.revokeObjectURL(url);
   };
- 
+
   const escapeHtml = (s) => (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
- 
+
   // Splits on blank lines into paragraphs (the normal way prose is separated),
   // and turns single line breaks within a paragraph into <br/>.
   const paragraphsHtml = (text) =>
@@ -1274,7 +1254,7 @@ export default function StoryAtelier() {
       .filter((p) => p.trim())
       .map((p) => `<p style="margin:0 0 12pt 0;">${escapeHtml(p.trim()).replace(/\n/g, "<br/>")}</p>`)
       .join("\n") || `<p style="margin:0 0 12pt 0; color:#888;">(empty)</p>`;
- 
+
   const exportManuscript = () => {
     if (!project) return;
     let lastChapter = null;
@@ -1298,7 +1278,7 @@ ${parts.join("\n")}
 </body></html>`;
     download(`${project.name.replace(/\s+/g, "_")}_manuscript.doc`, html, "application/msword");
   };
- 
+
   const exportBible = () => {
     if (!project) return;
     const chars = project.characters.map((c) => `${c.name}${c.role ? " — " + c.role : ""}\nTraits: ${c.traits || "—"}\n${c.backstory || ""}`).join("\n\n");
@@ -1307,7 +1287,7 @@ ${parts.join("\n")}
     const text = `CHARACTERS\n==========\n\n${chars || "—"}\n\n\nTIMELINE\n========\n\n${timeline || "—"}\n\n\nWIKI\n====\n\n${wiki || "—"}`;
     download(`${project.name.replace(/\s+/g, "_")}_story_bible.txt`, text);
   };
- 
+
   if (loading) {
     return (
       <div style={getOuterWrap()}>
@@ -1316,10 +1296,10 @@ ${parts.join("\n")}
       </div>
     );
   }
- 
+
   const globalTotalWords = (projects || []).reduce((sum, p) => sum + (p.wordCount || 0), 0);
   const streak = computeStreak(activityLog);
- 
+
   return (
     <div style={getOuterWrap()}>
       <DecorDefs />
@@ -1450,7 +1430,7 @@ ${parts.join("\n")}
     </div>
   );
 }
- 
+
 function getOuterWrap() {
   return {
     fontFamily: "'Source Serif 4', serif",
@@ -1468,11 +1448,11 @@ function getOuterWrap() {
     position: "relative",
   };
 }
- 
+
 function getLoadingWrap() {
   return { display: "flex", alignItems: "center", justifyContent: "center", flex: 1, color: COLORS.inkSoft };
 }
- 
+
 // A little wood-grained "shelf plank" that sits under each row of spines,
 // standing in for the plain divider line and giving the page an actual
 // bookshelf feel. The rough-paper filter keeps its edges from looking
@@ -1485,7 +1465,7 @@ const shelfPlankStyle = {
   boxShadow: "0 4px 8px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.08)",
   filter: "url(#roughPaper)",
 };
- 
+
 function FontImport() {
   return (
     <style>{`
@@ -1511,7 +1491,7 @@ function FontImport() {
         top: 3px; bottom: 3px; left: 10px; right: 10px;
         background-image: repeating-linear-gradient(90deg, rgba(0,0,0,0.12) 0px, rgba(0,0,0,0.12) 1px, transparent 1px, transparent 26px);
       }
- 
+
       /* ---- Mobile layout ---- */
       @media (max-width: 700px) {
         .atelier-tabbar { padding: 0 12px !important; }
@@ -1532,9 +1512,9 @@ function FontImport() {
     `}</style>
   );
 }
- 
+
 /* ---------------- SHELF (landing page) ---------------- */
- 
+
 function ShelfView({
   projects, onOpen, creating, setCreating, newName, setNewName, newColor, setNewColor, onCreate,
   metaEditId, setMetaEditId, onUpdateMeta, confirmDeleteId, setConfirmDeleteId, onDelete,
@@ -1544,7 +1524,7 @@ function ShelfView({
   const archived = projects.filter((p) => p.archived);
   const editing = projects.find((p) => p.id === metaEditId);
   const allSeries = Array.from(new Set(projects.map((p) => (p.series || "").trim()).filter(Boolean))).sort();
- 
+
   return (
     <div className="atelier-scroll" style={{ padding: "36px 40px", flex: 1, minHeight: 0, overflowY: "auto" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
@@ -1555,16 +1535,16 @@ function ShelfView({
         Every world you're building, in one place. Click a spine to open it.
       </p>
       <div style={{ marginBottom: 18 }}><Squiggle width={150} /></div>
- 
+
       <div style={{ display: "flex", gap: 12, marginBottom: 28 }}>
         <StatPill icon={<PenLine size={13} />} value={globalTotalWords.toLocaleString()} label="words across every world" />
         <StatPill icon={<Flame size={13} color={streak > 0 ? COLORS.wine : COLORS.inkSoft} />} value={streak} label={streak === 1 ? "day writing streak" : "day writing streak"} highlight={streak > 0} />
       </div>
- 
+
       {projects.length === 0 && !creating && (
         <p style={{ color: COLORS.inkSoft, fontStyle: "italic", marginBottom: 20 }}>Nothing on the shelf yet — add your first world below.</p>
       )}
- 
+
       {STATUSES.map((status) => {
         const inStatus = active.filter((p) => p.status === status);
         if (inStatus.length === 0) return null;
@@ -1585,7 +1565,7 @@ function ShelfView({
           </div>
         );
       })}
- 
+
       <div style={{ marginTop: 20 }}>
         {creating ? (
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
@@ -1602,7 +1582,7 @@ function ShelfView({
           </button>
         )}
       </div>
- 
+
       {archived.length > 0 && (
         <div style={{ marginTop: 40 }}>
           <button onClick={() => setShowArchived(!showArchived)} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: COLORS.inkSoft, cursor: "pointer", fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 }}>
@@ -1621,7 +1601,7 @@ function ShelfView({
           )}
         </div>
       )}
- 
+
       {editing && (
         <MetaModal
           project={editing}
@@ -1637,7 +1617,7 @@ function ShelfView({
     </div>
   );
 }
- 
+
 function StatPill({ icon, value, label, highlight }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderRadius: 6, background: COLORS.paperRaised, border: `1px solid ${COLORS.paperLine}` }}>
@@ -1647,7 +1627,7 @@ function StatPill({ icon, value, label, highlight }) {
     </div>
   );
 }
- 
+
 function Spine({ p, onOpen, onEdit, dimmed, hideSeriesTag }) {
   return (
     <div style={{ position: "relative", display: "flex", flexDirection: "column", alignItems: "center" }}>
@@ -1665,7 +1645,7 @@ function Spine({ p, onOpen, onEdit, dimmed, hideSeriesTag }) {
     </div>
   );
 }
- 
+
 // Wraps every book that shares a series in a single hand-drawn dashed box,
 // with a little washi-tape label pinned to the top holding the series name —
 // so instead of a tiny tag under each spine, the shelf visibly groups them.
@@ -1690,7 +1670,7 @@ function SeriesCluster({ series, projects, onOpen, onEdit }) {
     </div>
   );
 }
- 
+
 function WashiLabel({ text }) {
   return (
     <div
@@ -1722,7 +1702,7 @@ function WashiLabel({ text }) {
     </div>
   );
 }
- 
+
 function QuickCaptureModal({ onSave, onClose }) {
   const [text, setText] = useState("");
   const submit = () => {
@@ -1758,7 +1738,7 @@ function QuickCaptureModal({ onSave, onClose }) {
     </div>
   );
 }
- 
+
 function SettingsModal({ theme, onChangeTheme, onResetTutorial, user, authBusy, authError, onSignIn, onSignOut, onClose }) {
   const OptionCard = ({ value, label, sub, swatchBg, swatchInk }) => {
     const active = theme === value;
@@ -1784,7 +1764,7 @@ function SettingsModal({ theme, onChangeTheme, onResetTutorial, user, authBusy, 
       </button>
     );
   };
- 
+
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(43,42,40,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 }}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: COLORS.paperRaised, borderRadius: 8, padding: 24, width: 340, maxWidth: "90vw", border: `1px solid ${COLORS.paperLine}` }}>
@@ -1792,7 +1772,7 @@ function SettingsModal({ theme, onChangeTheme, onResetTutorial, user, authBusy, 
           <span style={{ fontFamily: "'Fraunces', serif", fontSize: 18, fontWeight: 600, color: COLORS.ink }}>Settings</span>
           <button onClick={onClose} style={{ background: "none", border: "none", color: COLORS.inkSoft, cursor: "pointer" }}><X size={16} /></button>
         </div>
- 
+
         <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: COLORS.inkSoft, marginBottom: 8 }}>
           Account
         </div>
@@ -1834,7 +1814,7 @@ function SettingsModal({ theme, onChangeTheme, onResetTutorial, user, authBusy, 
             ? "Your stories sync to this account — sign in the same way on another device to pick up right where you left off."
             : "Sign in to sync your stories to your Google account, so they show up on your other devices too."}
         </p>
- 
+
         <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: COLORS.inkSoft, marginBottom: 8 }}>
           Appearance
         </div>
@@ -1843,7 +1823,7 @@ function SettingsModal({ theme, onChangeTheme, onResetTutorial, user, authBusy, 
         <p style={{ fontSize: 12, color: COLORS.inkSoft, marginTop: 4, marginBottom: 18 }}>
           Your choice is saved on this device and applies across every project.
         </p>
- 
+
         <div style={{ borderTop: `1px solid ${COLORS.paperLine}`, paddingTop: 16 }}>
           <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: COLORS.inkSoft, marginBottom: 8 }}>
             Help
@@ -1867,7 +1847,7 @@ function SettingsModal({ theme, onChangeTheme, onResetTutorial, user, authBusy, 
     </div>
   );
 }
- 
+
 function MetaModal({ project, allSeries = [], onClose, onUpdate, confirmDelete, onAskDelete, onCancelDelete, onConfirmDelete }) {
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(43,42,40,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 }}>
@@ -1915,9 +1895,9 @@ function MetaModal({ project, allSeries = [], onClose, onUpdate, confirmDelete, 
     </div>
   );
 }
- 
+
 /* ---------------- WORKSPACE ---------------- */
- 
+
 function WorkspaceView({
   project, onBack, tab, setTab, editorId, setEditorId, saveState, onRename,
   addCharacter, addRelationship, removeRelationship, updateMapPositions, addEvent, insertEvent, addWiki, addBrainstormEntry, addMoodboardItem, addScene, moveItem, removeItem, patchItem, exportBible, exportManuscript,
@@ -1925,7 +1905,7 @@ function WorkspaceView({
   if (!project) {
     return <div style={{ padding: 40 }}><BackButton onBack={onBack} /><p style={{ color: COLORS.inkSoft, marginTop: 20 }}>Couldn't find that world.</p></div>;
   }
- 
+
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
       <div style={{ padding: "18px 24px 0 24px" }}>
@@ -1942,7 +1922,7 @@ function WorkspaceView({
         </div>
         <StitchDivider />
       </div>
- 
+
       <div className="atelier-scroll atelier-tabbar" style={{ display: "flex", gap: 4, padding: "0 24px", overflowX: "auto", overflowY: "hidden", WebkitOverflowScrolling: "touch" }}>
         {TABS.map((t) => {
           const Icon = t.icon;
@@ -1954,7 +1934,7 @@ function WorkspaceView({
           );
         })}
       </div>
- 
+
       <div className="atelier-scroll atelier-tabpane-row" style={{ flex: 1, minHeight: 0, background: COLORS.paperRaised, borderTop: `1px solid ${COLORS.paperLine}`, display: "flex", overflow: "hidden" }}>
         {tab === "characters" && (
           <CharactersSection
@@ -2002,7 +1982,7 @@ function WorkspaceView({
     </div>
   );
 }
- 
+
 function BackButton({ onBack }) {
   return (
     <button onClick={onBack} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: COLORS.inkSoft, cursor: "pointer", fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, padding: 0 }}>
@@ -2010,17 +1990,17 @@ function BackButton({ onBack }) {
     </button>
   );
 }
- 
+
 function getExportBtnStyle() {
   return { display: "flex", alignItems: "center", gap: 5, fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: "0.03em", padding: "6px 10px", borderRadius: 4, border: `1px solid ${COLORS.paperLine}`, background: "transparent", color: COLORS.inkSoft, cursor: "pointer" };
 }
- 
+
 function CharactersSection({ project, addCharacter, addRelationship, removeRelationship, updateMapPositions, editorId, setEditorId, patchItem, removeItem }) {
   const [mode, setMode] = useState("list");
   const [groupFilter, setGroupFilter] = useState(null);
   const allGroups = Array.from(new Set(project.characters.flatMap((c) => c.groups || []))).sort();
   const visibleChars = groupFilter ? project.characters.filter((c) => (c.groups || []).includes(groupFilter)) : project.characters;
- 
+
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 }}>
       <div style={{ display: "flex", gap: 6, padding: "10px 16px", borderBottom: `1px solid ${COLORS.paperLine}`, flexWrap: "wrap", alignItems: "center" }}>
@@ -2046,7 +2026,7 @@ function CharactersSection({ project, addCharacter, addRelationship, removeRelat
           </>
         )}
       </div>
- 
+
       {mode === "list" ? (
         <div className="atelier-tabpane-row" style={{ flex: 1, minHeight: 0, display: "flex", overflow: "hidden" }}>
           <ListPane
@@ -2073,7 +2053,7 @@ function CharactersSection({ project, addCharacter, addRelationship, removeRelat
     </div>
   );
 }
- 
+
 function CharacterMap({ characters, savedPositions, onPositionsChange }) {
   const [positions, setPositions] = useState({});
   const [selectedId, setSelectedId] = useState(null);
@@ -2083,9 +2063,9 @@ function CharacterMap({ characters, savedPositions, onPositionsChange }) {
   const positionsRef = useRef({});
   const width = 560, height = 420, cx = width / 2, cy = height / 2;
   const MIN_ZOOM = 0.5, MAX_ZOOM = 2.5;
- 
+
   const clampZoom = (z) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
- 
+
   // Extracts a {clientX, clientY} point from either a mouse event or a touch
   // event, so drag/zoom logic below doesn't need to know which kind fired.
   const getClientPoint = (e) => {
@@ -2093,7 +2073,7 @@ function CharacterMap({ characters, savedPositions, onPositionsChange }) {
     if (e.changedTouches && e.changedTouches.length) return e.changedTouches[0];
     return e;
   };
- 
+
   const edges = [];
   const seen = new Set();
   characters.forEach((c) => {
@@ -2105,7 +2085,7 @@ function CharacterMap({ characters, savedPositions, onPositionsChange }) {
       edges.push({ key, a: c.id, b: r.targetId, label: r.label });
     });
   });
- 
+
   // Seeds the map from saved positions. Any character without a saved spot
   // gets placed by a quick force simulation — pulled toward characters it's
   // linked to, pushed away from everyone else — instead of a plain circle
@@ -2114,14 +2094,14 @@ function CharacterMap({ characters, savedPositions, onPositionsChange }) {
   useEffect(() => {
     const saved = savedPositions || {};
     const unpositioned = characters.filter((c) => !saved[c.id]);
- 
+
     if (unpositioned.length === 0) {
       const next = {};
       characters.forEach((c) => { if (saved[c.id]) next[c.id] = saved[c.id]; });
       setPositions(next);
       return;
     }
- 
+
     const nodes = characters.map((c) => {
       const s = saved[c.id];
       return s ? { id: c.id, x: s.x, y: s.y, fx: s.x, fy: s.y } : { id: c.id };
@@ -2135,7 +2115,7 @@ function CharacterMap({ characters, savedPositions, onPositionsChange }) {
       .force("collide", d3.forceCollide(38))
       .stop();
     for (let i = 0; i < 300; i++) sim.tick();
- 
+
     const next = {};
     nodes.forEach((n) => {
       next[n.id] = { x: Math.max(30, Math.min(width - 30, n.x)), y: Math.max(30, Math.min(height - 30, n.y)) };
@@ -2144,17 +2124,17 @@ function CharacterMap({ characters, savedPositions, onPositionsChange }) {
     onPositionsChange && onPositionsChange(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [characters.map((c) => c.id).join(","), edges.map((e) => e.key).join(",")]);
- 
+
   useEffect(() => {
     positionsRef.current = positions;
   }, [positions]);
- 
+
   const handlePointerDown = (id) => (e) => {
     e.preventDefault();
     setDragId(id);
     setSelectedId(id);
   };
- 
+
   // Converts a screen point to the pre-zoom coordinate space the node positions
   // live in. The SVG scales uniformly to fit its box (preserveAspectRatio's
   // default "meet"), which usually leaves horizontal or vertical padding —
@@ -2170,7 +2150,7 @@ function CharacterMap({ characters, savedPositions, onPositionsChange }) {
     const outerY = (pt.clientY - rect.top - offsetY) / scale;
     return { x: cx + (outerX - cx) / zoom, y: cy + (outerY - cy) / zoom };
   };
- 
+
   // Track the drag on window rather than just the SVG element, so a fast
   // mouse movement that briefly leaves the map doesn't drop the drag.
   // Position is persisted once, on release, rather than on every pixel of
@@ -2201,12 +2181,12 @@ function CharacterMap({ characters, savedPositions, onPositionsChange }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dragId, zoom]);
- 
+
   const handleWheel = (e) => {
     e.preventDefault();
     setZoom((z) => clampZoom(z + (e.deltaY < 0 ? 0.1 : -0.1)));
   };
- 
+
   // Two-finger pinch to zoom. Only engages when exactly two touches land on
   // the map background — a single touch is left alone so it can still drag
   // a node via handlePointerDown/the effect above.
@@ -2228,7 +2208,7 @@ function CharacterMap({ characters, savedPositions, onPositionsChange }) {
   const endPinch = (e) => {
     if (e.touches.length < 2) pinchRef.current = null;
   };
- 
+
   if (characters.length < 2) {
     return (
       <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 40 }}>
@@ -2238,7 +2218,7 @@ function CharacterMap({ characters, savedPositions, onPositionsChange }) {
       </div>
     );
   }
- 
+
   return (
     <div className="atelier-tabpane-row" style={{ flex: 1, display: "flex" }}>
       <div style={{ flex: 1, padding: 16, minWidth: 0 }}>
@@ -2319,13 +2299,13 @@ function CharacterMap({ characters, savedPositions, onPositionsChange }) {
     </div>
   );
 }
- 
+
 const zoomBtnStyle = {
   width: 24, height: 24, borderRadius: 4, border: `1px solid ${COLORS.paperLine}`, background: COLORS.paperRaised,
   color: COLORS.inkSoft, cursor: "pointer", fontFamily: "'IBM Plex Mono', monospace", fontSize: 14, lineHeight: 1,
   display: "flex", alignItems: "center", justifyContent: "center",
 };
- 
+
 function LegendRow({ color, label }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
@@ -2334,7 +2314,7 @@ function LegendRow({ color, label }) {
     </div>
   );
 }
- 
+
 function ListPane({ items, onAdd, addLabel, editorId, setEditorId, renderCard, renderEditor, onMove }) {
   const selected = items.find((i) => i.id === editorId);
   return (
@@ -2378,7 +2358,7 @@ function ListPane({ items, onAdd, addLabel, editorId, setEditorId, renderCard, r
     </>
   );
 }
- 
+
 function CharacterEditor({ c, allChars, allGroups = [], onPatch, onDelete, onAddRelationship, onRemoveRelationship }) {
   const others = allChars.filter((x) => x.id !== c.id);
   return (
@@ -2401,14 +2381,14 @@ function CharacterEditor({ c, allChars, allGroups = [], onPatch, onDelete, onAdd
     </div>
   );
 }
- 
+
 // Free-form, multi-value tagging for teams, courts, houses, companies —
 // anything you'd want to visibly cluster characters by. Suggests group names
 // already used elsewhere in this project so tags stay consistent.
 function GroupTagEditor({ groups, allGroups, onChange }) {
   const [text, setText] = useState("");
   const current = groups || [];
- 
+
   const add = (g) => {
     const clean = (g || "").trim();
     if (!clean || current.includes(clean)) return;
@@ -2417,7 +2397,7 @@ function GroupTagEditor({ groups, allGroups, onChange }) {
   };
   const remove = (g) => onChange(current.filter((x) => x !== g));
   const suggestions = (allGroups || []).filter((g) => !current.includes(g));
- 
+
   return (
     <div>
       <p style={{ fontSize: 11, color: COLORS.inkSoft, fontFamily: "'IBM Plex Mono', monospace", marginTop: -4, marginBottom: 10 }}>
@@ -2453,24 +2433,24 @@ function GroupTagEditor({ groups, allGroups, onChange }) {
     </div>
   );
 }
- 
+
 function RelationshipEditor({ c, others, onAdd, onRemove }) {
   const rels = (c.relationships || []).filter((r) => others.some((o) => o.id === r.targetId));
   const [targetId, setTargetId] = useState("");
   const [customLabel, setCustomLabel] = useState("");
- 
+
   useEffect(() => {
     if (!targetId && others.length > 0) setTargetId(others[0].id);
   }, [others, targetId]);
- 
+
   const addRel = (label) => {
     if (!targetId || !label.trim()) return;
     onAdd(targetId, label.trim());
     setCustomLabel("");
   };
- 
+
   const nameFor = (id) => others.find((o) => o.id === id)?.name || "Unknown";
- 
+
   return (
     <div>
       <p style={{ fontSize: 11, color: COLORS.inkSoft, fontFamily: "'IBM Plex Mono', monospace", marginTop: -4, marginBottom: 10 }}>
@@ -2487,7 +2467,7 @@ function RelationshipEditor({ c, others, onAdd, onRemove }) {
           ))}
         </div>
       )}
- 
+
       {others.length === 0 ? (
         <p style={{ fontSize: 13, color: COLORS.inkSoft }}>Add other characters first to link them here.</p>
       ) : (
@@ -2513,11 +2493,11 @@ function RelationshipEditor({ c, others, onAdd, onRemove }) {
     </div>
   );
 }
- 
+
 function TimelineSection({ project, addEvent, insertEvent, moveItem, editorId, setEditorId, patchItem, removeItem }) {
   const [mode, setMode] = useState("list");
   const events = project.timeline || [];
- 
+
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 }}>
       <div style={{ display: "flex", gap: 6, padding: "10px 16px", borderBottom: `1px solid ${COLORS.paperLine}` }}>
@@ -2534,7 +2514,7 @@ function TimelineSection({ project, addEvent, insertEvent, moveItem, editorId, s
           <Milestone size={12} /> Timeline
         </button>
       </div>
- 
+
       {mode === "list" ? (
         <div className="atelier-tabpane-row" style={{ flex: 1, minHeight: 0, display: "flex", overflow: "hidden" }}>
           <ListPane
@@ -2558,13 +2538,13 @@ function TimelineSection({ project, addEvent, insertEvent, moveItem, editorId, s
     </div>
   );
 }
- 
+
 const UNIT_WIDTH = 176;
- 
+
 function TimelineVisual({ project, editorId, setEditorId, onMove, onInsert, patchItem, removeItem }) {
   const events = project.timeline || [];
   const selected = events.find((e) => e.id === editorId);
- 
+
   const Gap = ({ index }) => (
     <div style={{ display: "flex", alignItems: "center", width: 34, flexShrink: 0 }}>
       <div style={{ flex: 1, height: 2, background: COLORS.paperLine }} />
@@ -2578,7 +2558,7 @@ function TimelineVisual({ project, editorId, setEditorId, onMove, onInsert, patc
       <div style={{ flex: 1, height: 2, background: COLORS.paperLine }} />
     </div>
   );
- 
+
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
       <div className="atelier-scroll" style={{ overflowX: "auto", overflowY: "hidden", padding: "16px 16px 18px 16px" }}>
@@ -2634,7 +2614,7 @@ function TimelineVisual({ project, editorId, setEditorId, onMove, onInsert, patc
     </div>
   );
 }
- 
+
 function EventEditor({ e, allChars, onPatch, onDelete }) {
   return (
     <div style={{ maxWidth: 560 }}>
@@ -2656,23 +2636,23 @@ function EventEditor({ e, allChars, onPatch, onDelete }) {
     </div>
   );
 }
- 
+
 function InvolvedEditor({ e, allChars, onPatch }) {
   const [search, setSearch] = useState("");
   const linkedIds = e.linkedCharIds || [];
   const linkedChars = allChars.filter((c) => linkedIds.includes(c.id));
   const candidates = allChars.filter((c) => !linkedIds.includes(c.id) && c.name.toLowerCase().includes(search.toLowerCase()));
- 
+
   const add = (id) => {
     onPatch({ linkedCharIds: [...linkedIds, id] });
     setSearch("");
   };
   const remove = (id) => onPatch({ linkedCharIds: linkedIds.filter((x) => x !== id) });
- 
+
   if (allChars.length === 0) {
     return <p style={{ fontSize: 13, color: COLORS.inkSoft }}>Add characters first to link them to events.</p>;
   }
- 
+
   return (
     <div>
       {linkedChars.length > 0 && (
@@ -2685,7 +2665,7 @@ function InvolvedEditor({ e, allChars, onPatch }) {
           ))}
         </div>
       )}
- 
+
       <div style={{ position: "relative" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6, ...getInputStyle(), padding: "6px 10px" }}>
           <Search size={13} color={COLORS.inkSoft} />
@@ -2713,7 +2693,7 @@ function InvolvedEditor({ e, allChars, onPatch }) {
     </div>
   );
 }
- 
+
 function WikiSection({ project, addWiki, editorId, setEditorId, patchItem, removeItem }) {
   const [collapsed, setCollapsed] = useState({});
   const entries = project.wiki || [];
@@ -2724,7 +2704,7 @@ function WikiSection({ project, addWiki, editorId, setEditorId, patchItem, remov
   });
   const selected = entries.find((e) => e.id === editorId);
   const toggle = (cat) => setCollapsed((prev) => ({ ...prev, [cat]: !prev[cat] }));
- 
+
   return (
     <>
       <div className="atelier-scroll atelier-sidebar" style={{ width: 260, borderRight: `1px solid ${COLORS.paperLine}`, padding: 16, overflowY: "auto" }}>
@@ -2792,7 +2772,7 @@ function WikiSection({ project, addWiki, editorId, setEditorId, patchItem, remov
     </>
   );
 }
- 
+
 function WikiEditor({ w, onPatch, onDelete, categories = [] }) {
   return (
     <div style={{ maxWidth: 560 }}>
@@ -2807,22 +2787,22 @@ function WikiEditor({ w, onPatch, onDelete, categories = [] }) {
     </div>
   );
 }
- 
+
 function CategoryField({ value, categories, onChange, emptyValue = "Uncategorized", placeholder = "e.g. Locations, Lore, Magic System" }) {
   const [text, setText] = useState(value || emptyValue);
- 
+
   useEffect(() => {
     setText(value || emptyValue);
   }, [value, emptyValue]);
- 
+
   const commit = (v) => {
     const clean = (v || "").trim() || emptyValue;
     setText(clean);
     if (clean !== (value || emptyValue)) onChange(clean);
   };
- 
+
   const suggestions = categories.filter((c) => c.toLowerCase() !== (text || "").trim().toLowerCase());
- 
+
   return (
     <div>
       <input
@@ -2845,11 +2825,11 @@ function CategoryField({ value, categories, onChange, emptyValue = "Uncategorize
     </div>
   );
 }
- 
+
 function BrainstormSection({ project, addBrainstormEntry, editorId, setEditorId, patchItem, removeItem, moveItem }) {
   const entries = project.brainstorm || [];
   const selected = entries.find((e) => e.id === editorId);
- 
+
   return (
     <>
       <div className="atelier-scroll atelier-sidebar" style={{ width: 260, borderRight: `1px solid ${COLORS.paperLine}`, padding: 16, overflowY: "auto" }}>
@@ -2889,7 +2869,7 @@ function BrainstormSection({ project, addBrainstormEntry, editorId, setEditorId,
     </>
   );
 }
- 
+
 function BrainstormEditor({ entry, onPatch, onDelete }) {
   return (
     <div style={{ maxWidth: 640 }}>
@@ -2911,7 +2891,7 @@ function BrainstormEditor({ entry, onPatch, onDelete }) {
     </div>
   );
 }
- 
+
 function MoodboardPane({ project, onAdd, onRemove, onMove }) {
   const [url, setUrl] = useState("");
   const [caption, setCaption] = useState("");
@@ -2921,14 +2901,14 @@ function MoodboardPane({ project, onAdd, onRemove, onMove }) {
   const captionRef = useRef(caption);
   captionRef.current = caption;
   const items = project.moodboard || [];
- 
+
   const submitUrl = () => {
     if (!url.trim()) return;
     onAdd(url.trim(), caption);
     setUrl("");
     setCaption("");
   };
- 
+
   const handleFile = async (file) => {
     if (!file || !file.type.startsWith("image/")) return;
     setBusy(true);
@@ -2944,7 +2924,7 @@ function MoodboardPane({ project, onAdd, onRemove, onMove }) {
       setBusy(false);
     }
   };
- 
+
   // Lets you paste an image straight from your clipboard (e.g. copied from
   // another site or a screenshot) anywhere while this tab is open — except
   // inside the text fields, where a normal text paste should just work.
@@ -2972,7 +2952,7 @@ function MoodboardPane({ project, onAdd, onRemove, onMove }) {
     return () => window.removeEventListener("paste", onPaste);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
- 
+
   return (
     <div className="atelier-scroll" style={{ flex: 1, padding: 24, overflowY: "auto" }}>
       <p style={{ fontSize: 12, color: COLORS.inkSoft, fontFamily: "'IBM Plex Mono', monospace", marginBottom: 18, maxWidth: 560 }}>
@@ -3018,7 +2998,7 @@ function MoodboardPane({ project, onAdd, onRemove, onMove }) {
     </div>
   );
 }
- 
+
 function MoodboardCard({ item, onRemove, onMove, isFirst, isLast }) {
   const [broken, setBroken] = useState(false);
   const navBtnStyle = (disabled) => ({
@@ -3058,16 +3038,16 @@ function MoodboardCard({ item, onRemove, onMove, isFirst, isLast }) {
     </div>
   );
 }
- 
+
 function ManuscriptPane({ project, editorId, setEditorId, onAdd, onPatch, onDelete, onMove }) {
   const [collapsed, setCollapsed] = useState({});
   const scenes = project.scenes;
   const scene = scenes.find((s) => s.id === editorId);
   const hasChapters = scenes.some((s) => (s.chapter || "").trim());
   const allChapters = Array.from(new Set(scenes.map((s) => (s.chapter || "").trim()).filter(Boolean)));
- 
+
   const toggle = (key) => setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }));
- 
+
   const SceneRow = ({ s, i }) => (
     <div key={s.id} onClick={() => setEditorId(s.id)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 8px 8px 12px", borderRadius: 5, cursor: "pointer", marginBottom: 6, background: editorId === s.id ? COLORS.paper : "transparent", border: `1px solid ${editorId === s.id ? COLORS.paperLine : "transparent"}` }}>
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -3094,7 +3074,7 @@ function ManuscriptPane({ project, editorId, setEditorId, onAdd, onPatch, onDele
       </div>
     </div>
   );
- 
+
   // Groups are keyed by chapter, ordered by first appearance in the manuscript
   // (not alphabetically — story order matters more than alphabetical order
   // here). Scenes with no chapter set fall into an unlabeled bucket.
@@ -3105,14 +3085,14 @@ function ManuscriptPane({ project, editorId, setEditorId, onAdd, onPatch, onDele
       if (!groupKeys.includes(key)) groupKeys.push(key);
     });
   }
- 
+
   return (
     <>
       <div className="atelier-scroll atelier-sidebar" style={{ width: 250, borderRight: `1px solid ${COLORS.paperLine}`, padding: 16, overflowY: "auto" }}>
         <button onClick={() => onAdd()} style={{ display: "flex", alignItems: "center", gap: 6, width: "100%", justifyContent: "center", fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, padding: "8px 0", marginBottom: 12, borderRadius: 4, border: `1px dashed ${COLORS.paperLine}`, background: "transparent", color: COLORS.wine, cursor: "pointer" }}>
           <Plus size={13} /> New scene
         </button>
- 
+
         {!hasChapters ? (
           scenes.map((s, i) => <SceneRow key={s.id} s={s} i={i} />)
         ) : (
@@ -3147,7 +3127,7 @@ function ManuscriptPane({ project, editorId, setEditorId, onAdd, onPatch, onDele
           })
         )}
       </div>
- 
+
       <div className="atelier-scroll" style={{ flex: 1, padding: 24, overflowY: "auto" }}>
         {!scene ? <p style={{ color: COLORS.inkSoft, fontStyle: "italic" }}>Select a scene, or start a new one.</p> : (
           <div style={{ maxWidth: 640 }}>
@@ -3175,9 +3155,9 @@ function ManuscriptPane({ project, editorId, setEditorId, onAdd, onPatch, onDele
     </>
   );
 }
- 
+
 /* ---------------- ANALYTICS (per project) ---------------- */
- 
+
 function AnalyticsPane({ project }) {
   const totalWords = totalWordsForProject(project);
   const sceneCount = project.scenes.length;
@@ -3186,17 +3166,17 @@ function AnalyticsPane({ project }) {
   const last = history[history.length - 1];
   const prev = history[history.length - 2];
   const wordsToday = last ? (prev ? last.words - prev.words : last.words) : 0;
- 
+
   const sceneData = project.scenes.map((s) => ({
     name: s.title.length > 14 ? s.title.slice(0, 14) + "…" : s.title,
     words: countWords(s.content),
   }));
- 
+
   const chartDate = (d) => {
     const parts = d.split("-");
     return `${parts[1]}/${parts[2]}`;
   };
- 
+
   return (
     <div className="atelier-scroll" style={{ flex: 1, padding: 24, overflowY: "auto" }}>
       <div style={{ display: "flex", gap: 12, marginBottom: 28, flexWrap: "wrap" }}>
@@ -3205,7 +3185,7 @@ function AnalyticsPane({ project }) {
         <StatCard label="Avg words / scene" value={avgWords.toLocaleString()} />
         <StatCard label="Written today" value={Math.max(wordsToday, 0).toLocaleString()} accent />
       </div>
- 
+
       <div style={{ marginBottom: 32 }}>
         <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", color: COLORS.wine, marginBottom: 10 }}>Words over time</div>
         {history.length < 2 ? (
@@ -3222,7 +3202,7 @@ function AnalyticsPane({ project }) {
           </ResponsiveContainer>
         )}
       </div>
- 
+
       <div>
         <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", color: COLORS.sage, marginBottom: 10 }}>Words per scene</div>
         {sceneData.length === 0 ? (
@@ -3242,7 +3222,7 @@ function AnalyticsPane({ project }) {
     </div>
   );
 }
- 
+
 function StatCard({ label, value, accent }) {
   return (
     <div style={{ padding: "12px 18px", borderRadius: 6, background: COLORS.paper, border: `1px solid ${COLORS.paperLine}`, minWidth: 120 }}>
@@ -3251,10 +3231,9 @@ function StatCard({ label, value, accent }) {
     </div>
   );
 }
- 
- 
+
+
 ReactDOM.createRoot(document.getElementById("root")).render(<StoryAtelier />);
 </script>
 </body>
 </html>
- 
