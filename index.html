@@ -237,7 +237,7 @@ async function recoverOrphanedProjects(uid, idx) {
 
 import {
   Users, Clock, BookOpen, PenLine, Plus, X, Download, Loader2, Library, Link2,
-  Settings, ArrowLeft, Archive, ArchiveRestore, Trash2, Flame, BarChart3, Network, List, Eye, Search, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Images, ImageOff, Folder, Milestone, Lightbulb, Layers,
+  Settings, ArrowLeft, Archive, ArchiveRestore, Trash2, Flame, BarChart3, Network, List, Eye, Search, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Images, ImageOff, Folder, Lightbulb, Layers,
 } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar,
@@ -324,6 +324,25 @@ function buildGroupColorMap(groupNames) {
     }
   });
   return map;
+}
+
+// Groups a list of timeline events into clusters keyed by their free-text
+// "date / order marker" field (e.g. "Act One", "Midpoint") — the same field
+// EventEditor already exposes, so no new data shape is introduced. Clusters
+// preserve the order their key first appears in the timeline, mirroring how
+// ManuscriptPane groups scenes by chapter. Events with no marker fall into a
+// single "No marker" bucket.
+function groupEventsByAct(events) {
+  const groupKeys = [];
+  events.forEach((e) => {
+    const key = (e.date || "").trim() || "__none__";
+    if (!groupKeys.includes(key)) groupKeys.push(key);
+  });
+  return groupKeys.map((key) => ({
+    key,
+    label: key === "__none__" ? "No marker" : key,
+    items: events.filter((e) => ((e.date || "").trim() || "__none__") === key),
+  }));
 }
 
 // Groups a list of shelf entries into series clusters, preserving the order
@@ -643,8 +662,8 @@ const PAGE_INTROS = {
     intro: "Let's put your story's events in order. Here's how:",
     steps: [
       "Tap \"+ New event\" to add a moment in your story.",
-      "Give it a date (even a rough one) and a short description.",
-      "Switch to the \"Timeline\" view up top to see it all laid out visually, with POV markers.",
+      "Give it a date or order marker (e.g. \"Act One\", \"Midpoint\") and a short description.",
+      "Events sharing a marker group together automatically, with their own color band on the left so you can see the shape of your whole story at a glance.",
     ],
   },
   manuscript: {
@@ -1165,11 +1184,15 @@ export default function StoryAtelier() {
     setEditorId(id);
   };
 
-  const insertEvent = (index) => {
+  // index: absolute position in the timeline array to splice the new event
+  // into. presetDate: optional order-marker to pre-fill (e.g. so "add within
+  // this act" from the grouped Timeline view drops the new event straight
+  // into that act's group instead of an unmarked one).
+  const insertEvent = (index, presetDate = "") => {
     const newId = uid();
     updateProject((p) => {
       const timeline = [...p.timeline];
-      timeline.splice(index, 0, { id: newId, title: "", date: "", description: "", povCharId: "", linkedCharIds: [] });
+      timeline.splice(index, 0, { id: newId, title: "", date: presetDate, description: "", povCharId: "", linkedCharIds: [] });
       return { ...p, timeline };
     });
     setEditorId(newId);
@@ -2602,121 +2625,175 @@ function RelationshipEditor({ c, others, onAdd, onRemove }) {
   );
 }
 
+/* ---------------- TIMELINE ---------------- */
+//
+// Events group by their free-text `date` field (an "order marker" like
+// "Act One" or "Midpoint" — see EventEditor below). A narrow color-banded
+// strip on the left acts as a persistent map of the whole story's shape —
+// one band per act, one dot per event, the current event ringed — while the
+// grouped list beside it stays readable. Clicking a scene opens its detail
+// panel to the right, exactly like every other section in the app.
+
 function TimelineSection({ project, addEvent, insertEvent, moveItem, editorId, setEditorId, patchItem, removeItem }) {
-  const [mode, setMode] = useState("list");
   const events = project.timeline || [];
-
-  return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 }}>
-      <div style={{ display: "flex", gap: 6, padding: "10px 16px", borderBottom: `1px solid ${COLORS.paperLine}` }}>
-        <button
-          onClick={() => setMode("list")}
-          style={{ ...getExportBtnStyle(), background: mode === "list" ? COLORS.paper : "transparent", color: mode === "list" ? COLORS.wine : COLORS.inkSoft, borderColor: mode === "list" ? COLORS.wine : COLORS.paperLine }}
-        >
-          <List size={12} /> List
-        </button>
-        <button
-          onClick={() => setMode("visual")}
-          style={{ ...getExportBtnStyle(), background: mode === "visual" ? COLORS.paper : "transparent", color: mode === "visual" ? COLORS.wine : COLORS.inkSoft, borderColor: mode === "visual" ? COLORS.wine : COLORS.paperLine }}
-        >
-          <Milestone size={12} /> Timeline
-        </button>
-      </div>
-
-      {mode === "list" ? (
-        <div className="atelier-tabpane-row" style={{ flex: 1, minHeight: 0, display: "flex", overflow: "hidden" }}>
-          <ListPane
-            items={events} onAdd={addEvent} addLabel="New event" editorId={editorId} setEditorId={setEditorId}
-            onMove={(id, dir) => moveItem("timeline", id, dir)}
-            renderCard={(e) => (<><div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: COLORS.wine }}>{e.date || "undated"}</div><div style={{ fontFamily: "'Fraunces', serif", fontSize: 16, fontWeight: 600 }}>{e.title || "Untitled event"}</div>{e.povCharId && <div style={{ fontSize: 11, color: COLORS.inkSoft, marginTop: 2 }}>POV: {project.characters.find((c) => c.id === e.povCharId)?.name || "—"}</div>}</>)}
-            renderEditor={(e) => (<EventEditor e={e} allChars={project.characters} onPatch={(patch) => patchItem("timeline", e.id, patch)} onDelete={() => { removeItem("timeline", e.id); setEditorId(null); }} />)}
-          />
-        </div>
-      ) : (
-        <TimelineVisual
-          project={project}
-          editorId={editorId}
-          setEditorId={setEditorId}
-          onMove={(id, dir) => moveItem("timeline", id, dir)}
-          onInsert={insertEvent}
-          patchItem={patchItem}
-          removeItem={removeItem}
-        />
-      )}
-    </div>
+  const groups = useMemo(() => groupEventsByAct(events), [events]);
+  const colorMap = useMemo(
+    () => buildGroupColorMap(groups.map((g) => g.label)),
+    [groups.map((g) => g.label).join("|")]
   );
-}
-
-const UNIT_WIDTH = 176;
-
-function TimelineVisual({ project, editorId, setEditorId, onMove, onInsert, patchItem, removeItem }) {
-  const events = project.timeline || [];
   const selected = events.find((e) => e.id === editorId);
+  const listRef = useRef(null);
 
-  const Gap = ({ index }) => (
-    <div style={{ display: "flex", alignItems: "center", width: 34, flexShrink: 0 }}>
-      <div style={{ flex: 1, height: 2, background: COLORS.paperLine }} />
-      <button
-        onClick={() => onInsert(index)}
-        title="Insert an event here"
-        style={{ width: 18, height: 18, borderRadius: "50%", border: `1px dashed ${COLORS.paperLine}`, background: COLORS.paperRaised, color: COLORS.inkSoft, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
-      >
-        <Plus size={10} />
-      </button>
-      <div style={{ flex: 1, height: 2, background: COLORS.paperLine }} />
-    </div>
-  );
+  const scrollToEvent = (id) => {
+    if (!id) return;
+    const el = listRef.current && listRef.current.querySelector(`[data-event-id="${id}"]`);
+    if (el) el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  };
+
+  const selectEvent = (id) => {
+    setEditorId(id);
+    scrollToEvent(id);
+  };
 
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
-      <div className="atelier-scroll" style={{ overflowX: "auto", overflowY: "hidden", padding: "16px 16px 18px 16px" }}>
-        <div style={{ position: "relative", width: "max-content", minWidth: "100%" }}>
-          {/* events row */}
-          <div style={{ display: "flex", alignItems: "flex-end", position: "relative" }}>
-            <Gap index={0} />
-            {events.map((e, i) => (
-              <React.Fragment key={e.id}>
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: UNIT_WIDTH - 34, flexShrink: 0 }}>
-                  <div
-                    onClick={() => setEditorId(e.id)}
-                    style={{
-                      width: "100%", padding: "8px 10px", borderRadius: 6, cursor: "pointer", marginBottom: 6,
-                      background: editorId === e.id ? COLORS.paper : COLORS.paperRaised,
-                      border: `1px solid ${editorId === e.id ? COLORS.wine : COLORS.paperLine}`,
-                    }}
-                  >
-                    <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: COLORS.wine }}>{e.date || "undated"}</div>
-                    <div style={{ fontFamily: "'Fraunces', serif", fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.title || "Untitled event"}</div>
-                    {e.povCharId && (
-                      <div style={{ fontSize: 10, color: COLORS.inkSoft, marginTop: 2, display: "flex", alignItems: "center", gap: 3 }}>
-                        <Eye size={9} /> {project.characters.find((c) => c.id === e.povCharId)?.name || "—"}
-                      </div>
-                    )}
-                    <div style={{ display: "flex", justifyContent: "center", gap: 10, marginTop: 4 }}>
-                      <button onClick={(ev) => { ev.stopPropagation(); onMove(e.id, -1); }} disabled={i === 0} title="Move earlier" style={{ background: "none", border: "none", color: i === 0 ? COLORS.paperLine : COLORS.inkSoft, cursor: i === 0 ? "default" : "pointer", padding: 1, lineHeight: 0 }}>
-                        <ChevronLeft size={13} />
-                      </button>
-                      <button onClick={(ev) => { ev.stopPropagation(); onMove(e.id, 1); }} disabled={i === events.length - 1} title="Move later" style={{ background: "none", border: "none", color: i === events.length - 1 ? COLORS.paperLine : COLORS.inkSoft, cursor: i === events.length - 1 ? "default" : "pointer", padding: 1, lineHeight: 0 }}>
-                        <ChevronRight size={13} />
-                      </button>
-                    </div>
-                  </div>
-                  <div style={{ width: 10, height: 10, borderRadius: "50%", background: COLORS.wine, flexShrink: 0 }} />
-                </div>
-                <Gap index={i + 1} />
-              </React.Fragment>
+    <div className="atelier-tabpane-row" style={{ flex: 1, minHeight: 0, display: "flex", overflow: "hidden" }}>
+      <div className="atelier-sidebar" style={{ width: 288, borderRight: `1px solid ${COLORS.paperLine}`, display: "flex", minHeight: 0 }}>
+        {/* mini arc map: one color band per act, one dot per event */}
+        {groups.length > 0 && (
+          <div style={{ width: 34, flexShrink: 0, display: "flex", flexDirection: "column", padding: "16px 0", gap: 4 }}>
+            {groups.map((g) => (
+              <div
+                key={g.key}
+                onClick={() => scrollToEvent(g.items[0]?.id)}
+                title={g.label}
+                style={{
+                  flex: g.items.length,
+                  minHeight: 20,
+                  margin: "0 9px",
+                  borderRadius: 4,
+                  background: colorMap[g.label] || COLORS.gold,
+                  position: "relative",
+                  cursor: "pointer",
+                }}
+              >
+                {g.items.map((it, i) => {
+                  const isCurrent = editorId === it.id;
+                  const topPct = g.items.length === 1 ? 50 : (i / (g.items.length - 1)) * 74 + 13;
+                  return (
+                    <div
+                      key={it.id}
+                      onClick={(ev) => { ev.stopPropagation(); selectEvent(it.id); }}
+                      title={it.title || "Untitled event"}
+                      style={{
+                        position: "absolute", left: "50%", top: `${topPct}%`, transform: "translate(-50%,-50%)",
+                        width: isCurrent ? 13 : 8, height: isCurrent ? 13 : 8, borderRadius: "50%",
+                        background: COLORS.paperRaised,
+                        border: `2px solid ${isCurrent ? COLORS.ink : "rgba(0,0,0,0.32)"}`,
+                        cursor: "pointer", transition: "width 0.1s, height 0.1s",
+                      }}
+                    />
+                  );
+                })}
+              </div>
             ))}
-            {events.length === 0 && (
-              <p style={{ fontSize: 13, color: COLORS.inkSoft, fontStyle: "italic", marginLeft: 8 }}>No events yet — use the + to add one.</p>
-            )}
           </div>
+        )}
+
+        {/* grouped, scrollable event list */}
+        <div ref={listRef} className="atelier-scroll" style={{ flex: 1, minWidth: 0, overflowY: "auto", padding: "16px 12px 16px 4px" }}>
+          <button
+            onClick={addEvent}
+            style={{ display: "flex", alignItems: "center", gap: 6, width: "100%", justifyContent: "center", fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, padding: "8px 0", marginBottom: 12, borderRadius: 4, border: `1px dashed ${COLORS.paperLine}`, background: "transparent", color: COLORS.wine, cursor: "pointer" }}
+          >
+            <Plus size={13} /> New event
+          </button>
+          {events.length === 0 && <p style={{ fontSize: 13, color: COLORS.inkSoft, fontStyle: "italic" }}>Nothing here yet.</p>}
+          {groups.map((g) => {
+            const lastAbsIdx = events.indexOf(g.items[g.items.length - 1]);
+            return (
+              <div key={g.key} style={{ marginBottom: 16 }}>
+                <div
+                  style={{
+                    position: "sticky", top: 0, zIndex: 1, background: COLORS.paperRaised,
+                    display: "flex", alignItems: "center", gap: 6, padding: "4px 0 6px",
+                  }}
+                >
+                  <span style={{ width: 8, height: 8, borderRadius: "50%", background: colorMap[g.label] || COLORS.gold, flexShrink: 0 }} />
+                  <span style={{ flex: 1, fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", color: colorMap[g.label] || COLORS.gold, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {g.label}
+                  </span>
+                  <button
+                    onClick={() => insertEvent(lastAbsIdx + 1, g.label === "No marker" ? "" : g.label)}
+                    title={`New event in ${g.label}`}
+                    style={{ background: "none", border: "none", color: COLORS.inkSoft, cursor: "pointer", display: "flex", padding: 2, flexShrink: 0 }}
+                  >
+                    <Plus size={12} />
+                  </button>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {g.items.map((item) => {
+                    const absIdx = events.indexOf(item);
+                    return (
+                      <div
+                        key={item.id}
+                        data-event-id={item.id}
+                        onClick={() => selectEvent(item.id)}
+                        style={{
+                          display: "flex", alignItems: "center", gap: 4,
+                          padding: "8px 6px 8px 12px", borderRadius: 5, cursor: "pointer",
+                          background: editorId === item.id ? COLORS.paper : "transparent",
+                          border: `1px solid ${editorId === item.id ? COLORS.paperLine : "transparent"}`,
+                        }}
+                      >
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontFamily: "'Fraunces', serif", fontSize: 15, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {item.title || "Untitled event"}
+                          </div>
+                          {item.povCharId && (
+                            <div style={{ fontSize: 11, color: COLORS.inkSoft, marginTop: 2, display: "flex", alignItems: "center", gap: 3 }}>
+                              <Eye size={9} /> {project.characters.find((c) => c.id === item.povCharId)?.name || "—"}
+                            </div>
+                          )}
+                        </div>
+                        <div style={{ display: "flex", flexDirection: "column", flexShrink: 0 }}>
+                          <button
+                            onClick={(ev) => { ev.stopPropagation(); moveItem("timeline", item.id, -1); }}
+                            disabled={absIdx === 0}
+                            title="Move earlier"
+                            style={{ background: "none", border: "none", color: absIdx === 0 ? COLORS.paperLine : COLORS.inkSoft, cursor: absIdx === 0 ? "default" : "pointer", padding: 1, lineHeight: 0 }}
+                          >
+                            <ChevronUp size={13} />
+                          </button>
+                          <button
+                            onClick={(ev) => { ev.stopPropagation(); moveItem("timeline", item.id, 1); }}
+                            disabled={absIdx === events.length - 1}
+                            title="Move later"
+                            style={{ background: "none", border: "none", color: absIdx === events.length - 1 ? COLORS.paperLine : COLORS.inkSoft, cursor: absIdx === events.length - 1 ? "default" : "pointer", padding: 1, lineHeight: 0 }}
+                          >
+                            <ChevronDown size={13} />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
-      <div className="atelier-scroll" style={{ flex: 1, padding: 24, overflowY: "auto", borderTop: `1px solid ${COLORS.paperLine}` }}>
+
+      <div className="atelier-scroll" style={{ flex: 1, padding: 24, overflowY: "auto" }}>
         {selected ? (
-          <EventEditor key={selected.id} e={selected} allChars={project.characters} onPatch={(patch) => patchItem("timeline", selected.id, patch)} onDelete={() => { removeItem("timeline", selected.id); setEditorId(null); }} />
+          <EventEditor
+            key={selected.id}
+            e={selected}
+            allChars={project.characters}
+            onPatch={(patch) => patchItem("timeline", selected.id, patch)}
+            onDelete={() => { removeItem("timeline", selected.id); setEditorId(null); }}
+          />
         ) : (
-          <p style={{ color: COLORS.inkSoft, fontStyle: "italic" }}>Select an event above, or use the + buttons to drop a new one in along the line.</p>
+          <p style={{ color: COLORS.inkSoft, fontStyle: "italic" }}>Select something on the left, or add a new one.</p>
         )}
       </div>
     </div>
