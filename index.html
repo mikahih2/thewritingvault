@@ -237,7 +237,7 @@ async function recoverOrphanedProjects(uid, idx) {
 
 import {
   Users, Clock, BookOpen, PenLine, Plus, X, Download, Loader2, Library, Link2,
-  Settings, ArrowLeft, Archive, ArchiveRestore, Trash2, Flame, BarChart3, Network, List, Eye, Search, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Images, ImageOff, Folder, Lightbulb, Layers,
+  Settings, ArrowLeft, Archive, ArchiveRestore, Trash2, Flame, BarChart3, Network, List, Eye, Search, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Images, ImageOff, Folder, Lightbulb, Layers, RefreshCw,
 } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar,
@@ -1257,9 +1257,9 @@ export default function StoryAtelier() {
     setMetaEditId(null);
   };
 
-  const addCharacter = () => {
+  const addCharacter = (group) => {
     const id = uid();
-    updateProject((p) => ({ ...p, characters: [...p.characters, { id, name: "", role: "", backstory: "", traits: "", relationships: [], groups: [] }] }));
+    updateProject((p) => ({ ...p, characters: [...p.characters, { id, name: "", role: "", backstory: "", traits: "", relationships: [], groups: group ? [group] : [] }] }));
     setEditorId(id);
   };
 
@@ -2530,7 +2530,7 @@ function CharactersSection({ project, addCharacter, addRelationship, removeRelat
       {mode === "list" ? (
         <div className="atelier-tabpane-row" style={{ flex: 1, minHeight: 0, display: "flex", overflow: "hidden" }}>
           <ListPane
-            items={visibleChars} onAdd={addCharacter} addLabel="New character" editorId={editorId} setEditorId={setEditorId}
+            items={visibleChars} onAdd={() => addCharacter(groupFilter)} addLabel={groupFilter ? `New character in ${groupFilter}` : "New character"} editorId={editorId} setEditorId={setEditorId}
             renderCard={(c) => (
               <>
                 <div style={{ fontFamily: "'Fraunces', serif", fontSize: 16, fontWeight: 600 }}>{c.name || "Untitled character"}</div>
@@ -2590,25 +2590,35 @@ function CharacterMap({ characters, savedPositions, onPositionsChange }) {
     });
   });
 
-  // Seeds the map from saved positions. Any character without a saved spot
-  // gets placed by a quick force simulation — pulled toward characters it's
-  // linked to, pushed away from everyone else — instead of a plain circle
-  // that ignores who's actually connected. Characters that already have a
-  // saved position stay pinned exactly where they were left.
-  useEffect(() => {
+  // Each character's primary group (first tag, or "__none__") gets its own
+  // anchor point arranged in a ring around the center. A gentle forceX/forceY
+  // toward that anchor is what makes group actually matter spatially on this
+  // map — before this, group only showed up as a ring color, and characters
+  // never physically clustered together even when tagged the same way.
+  const groupKeyFor = (c) => (c.groups && c.groups[0]) || "__none__";
+  const groupKeys = Array.from(new Set(characters.map(groupKeyFor)));
+  const clusterAnchors = {};
+  if (groupKeys.length <= 1) {
+    groupKeys.forEach((g) => { clusterAnchors[g] = { x: cx, y: cy }; });
+  } else {
+    const clusterRadius = Math.min(width, height) * 0.3;
+    groupKeys.forEach((g, i) => {
+      const angle = (i / groupKeys.length) * Math.PI * 2 - Math.PI / 2;
+      clusterAnchors[g] = { x: cx + Math.cos(angle) * clusterRadius, y: cy + Math.sin(angle) * clusterRadius };
+    });
+  }
+
+  // Builds and runs the force simulation. `pinExisting` keeps any saved
+  // position fixed (fx/fy) so only brand-new characters get placed — this is
+  // what runs automatically on load. The manual "Recluster" button calls
+  // this with pinExisting=false so every character (including ones dragged
+  // around long ago) resettles into its current group's cluster.
+  const runSimulation = (pinExisting) => {
     const saved = savedPositions || {};
-    const unpositioned = characters.filter((c) => !saved[c.id]);
-
-    if (unpositioned.length === 0) {
-      const next = {};
-      characters.forEach((c) => { if (saved[c.id]) next[c.id] = saved[c.id]; });
-      setPositions(next);
-      return;
-    }
-
     const nodes = characters.map((c) => {
-      const s = saved[c.id];
-      return s ? { id: c.id, name: c.name, x: s.x, y: s.y, fx: s.x, fy: s.y } : { id: c.id, name: c.name };
+      const s = pinExisting ? saved[c.id] : null;
+      const group = groupKeyFor(c);
+      return s ? { id: c.id, name: c.name, group, x: s.x, y: s.y, fx: s.x, fy: s.y } : { id: c.id, name: c.name, group };
     });
     const links = edges.map((e) => ({ source: e.a, target: e.b }));
     const sim = d3
@@ -2617,6 +2627,8 @@ function CharacterMap({ characters, savedPositions, onPositionsChange }) {
       .force("charge", d3.forceManyBody().strength(-260))
       .force("center", d3.forceCenter(cx, cy))
       .force("collide", d3.forceCollide((d) => nodeSizeForName(d.name).radius + 12))
+      .force("clusterX", d3.forceX((d) => clusterAnchors[d.group].x).strength(groupKeys.length > 1 ? 0.09 : 0))
+      .force("clusterY", d3.forceY((d) => clusterAnchors[d.group].y).strength(groupKeys.length > 1 ? 0.09 : 0))
       .stop();
     for (let i = 0; i < 300; i++) sim.tick();
 
@@ -2626,6 +2638,21 @@ function CharacterMap({ characters, savedPositions, onPositionsChange }) {
     });
     setPositions(next);
     onPositionsChange && onPositionsChange(next);
+  };
+
+  // Seeds the map from saved positions on load — any character without a
+  // saved spot gets placed by the simulation above (pulled toward who it's
+  // linked to and toward its group's cluster); saved ones stay pinned.
+  useEffect(() => {
+    const saved = savedPositions || {};
+    const unpositioned = characters.filter((c) => !saved[c.id]);
+    if (unpositioned.length === 0) {
+      const next = {};
+      characters.forEach((c) => { if (saved[c.id]) next[c.id] = saved[c.id]; });
+      setPositions(next);
+      return;
+    }
+    runSimulation(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [characters.map((c) => c.id).join(","), edges.map((e) => e.key).join(",")]);
 
@@ -2731,6 +2758,9 @@ function CharacterMap({ characters, savedPositions, onPositionsChange }) {
             Drag a character to rearrange. Tap one to highlight their connections. Pinch to zoom.
           </p>
           <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+            <button onClick={() => runSimulation(false)} style={{ ...zoomBtnStyle, width: "auto", padding: "0 10px", fontSize: 11, display: "flex", alignItems: "center", gap: 5 }} title="Resettle every character into its group's cluster">
+              <RefreshCw size={11} /> Recluster
+            </button>
             <button onClick={() => setZoom((z) => clampZoom(z - 0.2))} style={zoomBtnStyle} title="Zoom out">−</button>
             <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: COLORS.inkSoft, width: 40, textAlign: "center" }}>{Math.round(zoom * 100)}%</span>
             <button onClick={() => setZoom((z) => clampZoom(z + 0.2))} style={zoomBtnStyle} title="Zoom in">+</button>
@@ -2770,14 +2800,16 @@ function CharacterMap({ characters, savedPositions, onPositionsChange }) {
                 if (!p) return null;
                 const dimmed = selectedId && selectedId !== c.id && !edges.some((e) => e.key.includes(c.id) && (e.a === selectedId || e.b === selectedId) && (e.a === c.id || e.b === c.id));
                 const primaryGroup = (c.groups && c.groups[0]) || null;
+                const secondaryGroup = (c.groups && c.groups[1]) || null;
+                const nodeFill = primaryGroup ? (groupColorMap[primaryGroup] || NODE_COLOR) : NODE_COLOR;
                 const { radius: r, label } = nodeSizeForName(c.name);
                 return (
                   <g key={c.id} opacity={dimmed ? 0.35 : 1} onMouseDown={handlePointerDown(c.id)} onTouchStart={handlePointerDown(c.id)} style={{ cursor: "grab", touchAction: "none" }}>
-                    {primaryGroup && (
-                      <circle cx={p.x} cy={p.y} r={r + 5} fill="none" stroke={groupColorMap[primaryGroup] || COLORS.gold} strokeWidth={2.5} strokeDasharray="4 3" />
+                    {secondaryGroup && (
+                      <circle cx={p.x} cy={p.y} r={r + 5} fill="none" stroke={groupColorMap[secondaryGroup] || COLORS.gold} strokeWidth={2.5} strokeDasharray="4 3" />
                     )}
-                    <circle cx={p.x} cy={p.y} r={r} fill={NODE_COLOR} stroke={selectedId === c.id ? COLORS.ink : "none"} strokeWidth={2} />
-                    <text x={p.x} y={p.y + 4} textAnchor="middle" fontFamily="Fraunces" fontWeight={600} fontSize={11} fill={COLORS.ink}>
+                    <circle cx={p.x} cy={p.y} r={r} fill={nodeFill} stroke={selectedId === c.id ? COLORS.ink : "none"} strokeWidth={2} />
+                    <text x={p.x} y={p.y + 4} textAnchor="middle" fontFamily="Fraunces" fontWeight={600} fontSize={11} fill="#FBF3E7">
                       {label}
                     </text>
                   </g>
