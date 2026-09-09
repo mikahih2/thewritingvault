@@ -245,31 +245,31 @@ import {
 import * as d3 from "d3";
 
 const DARK_COLORS = {
-  ink: "#EDE6D4",
-  inkSoft: "#9C9284",
-  paper: "#1B1916",
-  paperRaised: "#252220",
-  paperLine: "#3A3530",
-  wine: "#C15C6E",
-  wineSoft: "#D97C8C",
-  sage: "#93A67A",
-  sageSoft: "#AFC098",
-  gold: "#D3AC72",
-  paperDot: "rgba(237,230,212,0.035)",
+  ink: "#F3EAD9",
+  inkSoft: "#B9AC94",
+  paper: "#1E140C",
+  paperRaised: "#2C1D12",
+  paperLine: "#4A3423",
+  wine: "#E08A52",
+  wineSoft: "#EFAE80",
+  sage: "#8AA0D6",
+  sageSoft: "#AFC0E8",
+  gold: "#E8C170",
+  paperDot: "rgba(243,234,217,0.035)",
 };
 
 const LIGHT_COLORS = {
-  ink: "#2B2620",
-  inkSoft: "#7A7266",
-  paper: "#F7F1E6",
+  ink: "#2E2013",
+  inkSoft: "#8A7A63",
+  paper: "#FBF2E4",
   paperRaised: "#FFFFFF",
-  paperLine: "#E1D5C0",
-  wine: "#A8435A",
-  wineSoft: "#C97086",
-  sage: "#5E7549",
-  sageSoft: "#7C9566",
-  gold: "#9C7A3F",
-  paperDot: "rgba(43,38,32,0.045)",
+  paperLine: "#E8D6B8",
+  wine: "#C1663A",
+  wineSoft: "#D98E62",
+  sage: "#4C63A0",
+  sageSoft: "#7086C2",
+  gold: "#A67A33",
+  paperDot: "rgba(46,32,19,0.045)",
 };
 
 // A mutable palette object — its properties get swapped out (not the object
@@ -283,8 +283,8 @@ function applyTheme(name) {
   Object.assign(COLORS, name === "light" ? LIGHT_COLORS : DARK_COLORS);
 }
 
-const SPINE_COLORS = ["#C15C6E", "#93A67A", "#D3AC72", "#5B84A6", "#A6708F", "#7A9166"];
-const NODE_COLOR = "#5B84A6";
+const SPINE_COLORS = ["#3E8079", "#8B5A82", "#D9A94A", "#5C8A5F", "#C97A72", "#6C86B8"];
+const NODE_COLOR = "#6C86B8";
 
 // Approximates how wide a character's name will render at the map's label
 // font/size, and grows their circle just enough to fit it instead of a fixed
@@ -302,7 +302,7 @@ function nodeSizeForName(name) {
   return { radius, label };
 }
 const STATUSES = ["Brainstorming", "Drafting", "In Progress"];
-const GROUP_COLORS = ["#D3AC72", "#5B84A6", "#93A67A", "#C15C6E", "#A6708F", "#7A9166"];
+const GROUP_COLORS = ["#D9A94A", "#6C86B8", "#3E8079", "#C97A72", "#8B5A82", "#5C8A5F"];
 
 // Assigns each group in a project its own color, in a stable order (sorted
 // alphabetically) so the same group always gets the same color everywhere
@@ -368,7 +368,77 @@ function groupBySeries(list) {
   return clusters;
 }
 
-// Turns a Firebase Auth error into something a non-developer can actually
+// Flattens a project's characters, wiki, timeline, brainstorm, and scenes
+// into one searchable list for the Search modal. Each item keeps its raw
+// `content` field (the free-text body) separate from the precomputed
+// lowercase `searchable` string, so the modal can both filter fast and pull
+// a relevant snippet out of the matched field at render time.
+function buildSearchIndex(project) {
+  const items = [];
+  (project.characters || []).forEach((c) => {
+    const title = c.name || "Untitled character";
+    const meta = c.role || "";
+    const content = `${c.backstory || ""} ${c.traits || ""}`.trim();
+    items.push({ type: "characters", id: c.id, title, meta, content, searchable: `${title} ${meta} ${content}`.toLowerCase() });
+  });
+  (project.wiki || []).forEach((w) => {
+    const title = w.title || "Untitled entry";
+    const meta = w.category || "";
+    const content = w.body || "";
+    items.push({ type: "wiki", id: w.id, title, meta, content, searchable: `${title} ${meta} ${content}`.toLowerCase() });
+  });
+  (project.timeline || []).forEach((e) => {
+    const title = e.title || "Untitled event";
+    const meta = e.date || "";
+    const content = e.description || "";
+    items.push({ type: "timeline", id: e.id, title, meta, content, searchable: `${title} ${meta} ${content}`.toLowerCase() });
+  });
+  (project.brainstorm || []).forEach((b) => {
+    const title = b.title || (b.body ? b.body.slice(0, 40) : "Untitled");
+    const meta = b.date || "";
+    const content = b.body || "";
+    items.push({ type: "brainstorm", id: b.id, title, meta, content, searchable: `${title} ${meta} ${content}`.toLowerCase() });
+  });
+  (project.scenes || []).forEach((s) => {
+    const title = s.title || "Untitled scene";
+    const meta = s.chapter || "";
+    const content = s.content || "";
+    items.push({ type: "manuscript", id: s.id, title, meta, content, searchable: `${title} ${meta} ${content}`.toLowerCase() });
+  });
+  return items;
+}
+
+// Pulls a short window of text around the first match of `query` (already
+// lowercased) out of `text`, so search results show *why* something
+// matched rather than just that it did. Returns "" when the query isn't
+// actually in this field (e.g. it matched on the title instead), so the
+// caller can fall back to showing the item's meta line.
+function snippetFor(text, query, radius = 44) {
+  if (!text || !query) return "";
+  const idx = text.toLowerCase().indexOf(query);
+  if (idx === -1) return "";
+  const start = Math.max(0, idx - radius);
+  const end = Math.min(text.length, idx + query.length + radius);
+  return (start > 0 ? "…" : "") + text.slice(start, end).replace(/\s+/g, " ").trim() + (end < text.length ? "…" : "");
+}
+
+// Converts a project's `history` (cumulative word count per date) into a
+// map of date -> words written that specific day, the same way the
+// Analytics "Written today" stat already does it, just for every day
+// instead of just the most recent one. Powers the daily activity heatmap.
+function computeDailyDeltas(history) {
+  const sorted = [...(history || [])].sort((a, b) => (a.date < b.date ? -1 : 1));
+  const map = {};
+  let prevWords = 0;
+  sorted.forEach((h, i) => {
+    const delta = i === 0 ? h.words : h.words - prevWords;
+    map[h.date] = Math.max(0, delta);
+    prevWords = h.words;
+  });
+  return map;
+}
+
+
 // act on, since the raw error codes (and Firebase's own messages) are either
 // silent or too technical to show directly in the UI.
 function describeAuthError(e) {
@@ -848,6 +918,7 @@ export default function StoryAtelier() {
   const [user, setUser] = useState(null);
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState("");
+  const [sessionBaseline, setSessionBaseline] = useState(0);
   const skipFetchRef = useRef(false);
   const saveTimerRef = useRef(null);
   const pendingSaveRef = useRef(null);
@@ -1007,6 +1078,7 @@ export default function StoryAtelier() {
   useEffect(() => {
     if (!selectedId) {
       setProject(null);
+      setSessionBaseline(0);
       return;
     }
     if (skipFetchRef.current) {
@@ -1032,7 +1104,13 @@ export default function StoryAtelier() {
           data = null;
         }
       }
-      setProject(normalizeProject(data));
+      const normalized = normalizeProject(data);
+      setProject(normalized);
+      // Marks the word count at the moment this project was opened, so the
+      // Manuscript tab can show "words written this session" as a live
+      // delta from here — resets naturally every time a project is opened,
+      // which is exactly what "session" should mean.
+      setSessionBaseline(totalWordsForProject(normalized || { scenes: [] }));
       setEditorId(null);
       setTab("brainstorm");
     })();
@@ -1359,6 +1437,7 @@ ${parts.join("\n")}
 
   const globalTotalWords = (projects || []).reduce((sum, p) => sum + (p.wordCount || 0), 0);
   const streak = computeStreak(activityLog);
+  const sessionWords = project ? Math.max(0, totalWordsForProject(project) - sessionBaseline) : 0;
 
   return (
     <div style={getOuterWrap()}>
@@ -1486,6 +1565,7 @@ ${parts.join("\n")}
           exportBible={exportBible}
           exportManuscript={exportManuscript}
           onUpdateSettings={updateProjectSettings}
+          sessionWords={sessionWords}
         />
       )}
     </div>
@@ -1514,32 +1594,105 @@ function getLoadingWrap() {
   return { display: "flex", alignItems: "center", justifyContent: "center", flex: 1, color: COLORS.inkSoft };
 }
 
-// A little wood-grained "shelf plank" that sits under each row of spines,
-// standing in for the plain divider line and giving the page an actual
-// bookshelf feel. The rough-paper filter keeps its edges from looking
-// machine-perfect.
-const shelfPlankStyle = {
-  height: 20,
-  borderRadius: "2px 2px 4px 4px",
-  marginTop: -4,
-  background: "linear-gradient(180deg, #6B4A34 0%, #543823 55%, #3E2A19 100%)",
-  boxShadow: "0 6px 10px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.1)",
-  filter: "url(#roughPaper)",
-  position: "relative",
-  zIndex: 1,
+// A fixed illustration palette for the shelf cabinet itself — deliberately
+// NOT tied to the light/dark theme, the same way a photo of a real bookcase
+// doesn't change color when you dim the room. Everything else on the page
+// (labels, buttons, text) still uses the theme-aware COLORS object.
+const CABINET = {
+  woodHi: "#8C6642",
+  woodMid: "#5E3C22",
+  woodDeep: "#3A2415",
+  woodShadow: "#221207",
+  skyMid: "#1C2C4D",
+  skyDeep: "#0C1425",
+  star: "#F6DE9C",
+  starSoft: "#C9A75E",
 };
 
-// The "cavity" a shelf row sits inside — a soft recessed wood-toned panel
-// behind the spines with an inner shadow along the top, so the books read as
-// sitting inside a bookcase compartment rather than floating on bare page
-// background. Sits directly above the plank so the two read as one shelf
-// unit (wall behind, board underneath).
-const shelfCavityStyle = {
+// Layered background for a compartment's starry-night backing panel: a soft
+// glow near the top (echoing a little reading light), a scatter of small
+// stars at fixed positions, then the navy sky gradient underneath. All as
+// background-image layers on one element rather than a pseudo-element, so
+// it stays inline like the rest of the app's styling.
+const starryPanelBackground = [
+  `radial-gradient(140px 60px at 50% 0%, rgba(246,222,156,0.16), transparent 72%)`,
+  `radial-gradient(1.4px 1.4px at 10% 22%, ${CABINET.star}, transparent)`,
+  `radial-gradient(1px 1px at 26% 48%, ${CABINET.starSoft}, transparent)`,
+  `radial-gradient(1.6px 1.6px at 46% 16%, ${CABINET.star}, transparent)`,
+  `radial-gradient(1px 1px at 64% 58%, ${CABINET.starSoft}, transparent)`,
+  `radial-gradient(1.2px 1.2px at 74% 26%, ${CABINET.star}, transparent)`,
+  `radial-gradient(1px 1px at 88% 42%, ${CABINET.starSoft}, transparent)`,
+  `radial-gradient(1.4px 1.4px at 18% 68%, ${CABINET.star}, transparent)`,
+  `radial-gradient(1px 1px at 38% 78%, ${CABINET.starSoft}, transparent)`,
+  `radial-gradient(1.2px 1.2px at 82% 72%, ${CABINET.star}, transparent)`,
+  `radial-gradient(1px 1px at 56% 36%, ${CABINET.starSoft}, transparent)`,
+  `linear-gradient(180deg, ${CABINET.skyMid}, ${CABINET.skyDeep})`,
+].join(", ");
+
+// The whole bookcase: cornice on top, compartments in the middle, plinth at
+// the bottom — one contained cabinet instead of separate floating shelves.
+const cabinetStyle = {
   position: "relative",
-  padding: "20px 16px 0 16px",
-  borderRadius: "8px 8px 0 0",
-  background: "linear-gradient(180deg, rgba(84,56,35,0.12) 0%, rgba(84,56,35,0.05) 65%, transparent 100%)",
-  boxShadow: "inset 0 8px 14px -8px rgba(0,0,0,0.4), inset 0 0 0 1px rgba(84,56,35,0.08)",
+  background: `linear-gradient(180deg, ${CABINET.woodMid}, ${CABINET.woodDeep} 88%)`,
+  borderRadius: "16px 16px 6px 6px",
+  padding: "0 16px 14px",
+  boxShadow: "0 24px 60px rgba(0,0,0,0.45), inset 0 0 0 1px rgba(255,255,255,0.03)",
+};
+
+const corniceStyle = {
+  height: 24,
+  margin: "0 -16px 16px",
+  background: `linear-gradient(180deg, ${CABINET.woodHi}, ${CABINET.woodMid})`,
+  borderRadius: "16px 16px 0 0",
+  boxShadow: "0 3px 6px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.15)",
+};
+
+// A compartment's starry backing panel — spines sit on top of this,
+// bottom-aligned like books actually resting on a shelf.
+function shelfSkyStyle(minHeight = 150) {
+  return {
+    position: "relative",
+    borderRadius: "7px 7px 2px 2px",
+    padding: "18px 12px 0",
+    minHeight,
+    background: starryPanelBackground,
+    boxShadow: "inset 0 8px 16px rgba(0,0,0,0.55), inset 0 0 0 1px rgba(0,0,0,0.45)",
+    display: "flex",
+    alignItems: "flex-end",
+    gap: 20,
+    flexWrap: "wrap",
+  };
+}
+
+// The little warm light glowing at the top of each compartment.
+const shelfGlowStyle = {
+  position: "absolute",
+  top: 6,
+  left: "50%",
+  transform: "translateX(-50%)",
+  width: 6,
+  height: 6,
+  borderRadius: "50%",
+  background: CABINET.star,
+  boxShadow: "0 0 14px 5px rgba(246,222,156,0.55)",
+};
+
+const shelfBoardStyle = {
+  height: 15,
+  marginTop: -3,
+  position: "relative",
+  zIndex: 2,
+  background: `linear-gradient(180deg, ${CABINET.woodHi}, ${CABINET.woodMid} 60%, ${CABINET.woodDeep})`,
+  borderRadius: "2px 2px 3px 3px",
+  boxShadow: "0 6px 9px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.12)",
+};
+
+const cabinetPlinthStyle = {
+  height: 16,
+  margin: "2px -16px -14px",
+  background: `linear-gradient(180deg, ${CABINET.woodDeep}, ${CABINET.woodShadow})`,
+  borderRadius: "0 0 6px 6px",
+  boxShadow: "inset 0 2px 4px rgba(0,0,0,0.4)",
 };
 
 // A tiny hand-drawn potted plant used to dress up an otherwise-empty stretch
@@ -1607,8 +1760,8 @@ function FontImport() {
       }
       .spine-face::before { top: 13px; }
       .spine-face::after { bottom: 13px; }
-      .shelf-plank { position: relative; }
-      .shelf-plank::before {
+      .shelf-board-grain { position: relative; }
+      .shelf-board-grain::before {
         content: "";
         position: absolute;
         top: 3px; bottom: 3px; left: 10px; right: 10px;
@@ -1649,7 +1802,7 @@ function ShelfView({
   const allSeries = Array.from(new Set(projects.map((p) => (p.series || "").trim()).filter(Boolean))).sort();
 
   return (
-    <div className="atelier-scroll" style={{ padding: "36px 40px", flex: 1, minHeight: 0, overflowY: "auto", backgroundImage: "radial-gradient(ellipse at top, rgba(211,172,114,0.09), transparent 62%)" }}>
+    <div className="atelier-scroll" style={{ padding: "36px 40px", flex: 1, minHeight: 0, overflowY: "auto", backgroundImage: "radial-gradient(ellipse at top, rgba(232,193,112,0.09), transparent 62%)" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
         <Library size={20} color={COLORS.wine} />
         <h1 style={{ fontFamily: "'Fraunces', serif", fontSize: 28, fontWeight: 700, margin: 0 }}>The Shelf</h1>
@@ -1668,32 +1821,38 @@ function ShelfView({
         <p style={{ color: COLORS.inkSoft, fontStyle: "italic", marginBottom: 20 }}>Nothing on the shelf yet — add your first world below.</p>
       )}
 
-      {STATUSES.map((status, statusIdx) => {
-        const inStatus = active.filter((p) => p.status === status);
-        if (inStatus.length === 0) return null;
-        const clusters = groupBySeries(inStatus);
-        const Decor = SHELF_DECOR[statusIdx % SHELF_DECOR.length];
-        return (
-          <div key={status} style={{ marginBottom: 40 }}>
-            <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: COLORS.wine, marginBottom: 12 }}>{status}</div>
-            <div style={shelfCavityStyle}>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 20, alignItems: "flex-end", paddingBottom: 14 }}>
-                {clusters.map((cluster) =>
-                  cluster.series ? (
-                    <SeriesCluster key={cluster.series} series={cluster.series} projects={cluster.projects} onOpen={onOpen} onEdit={setMetaEditId} />
-                  ) : (
-                    <Spine key={cluster.projects[0].id} p={cluster.projects[0]} onOpen={onOpen} onEdit={() => setMetaEditId(cluster.projects[0].id)} />
-                  )
-                )}
-                <div style={{ marginLeft: "auto", opacity: 0.85 }}>
-                  <Decor />
+      {active.length > 0 && (
+        <div style={{ marginBottom: 40 }}>
+          <div style={cabinetStyle}>
+            <div style={corniceStyle} />
+            {STATUSES.map((status) => {
+              const inStatus = active.filter((p) => p.status === status);
+              if (inStatus.length === 0) return null;
+              const clusters = groupBySeries(inStatus);
+              return (
+                <div key={status} style={{ marginBottom: 18 }}>
+                  <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: CABINET.starSoft, margin: "0 2px 8px" }}>{status}</div>
+                  <div style={shelfSkyStyle()}>
+                    <div style={shelfGlowStyle} />
+                    {clusters.map((cluster) =>
+                      cluster.series ? (
+                        <SeriesCluster key={cluster.series} series={cluster.series} projects={cluster.projects} onOpen={onOpen} onEdit={setMetaEditId} onDark />
+                      ) : (
+                        <Spine key={cluster.projects[0].id} p={cluster.projects[0]} onOpen={onOpen} onEdit={() => setMetaEditId(cluster.projects[0].id)} onDark />
+                      )
+                    )}
+                  </div>
+                  <div className="shelf-board-grain" style={shelfBoardStyle} />
                 </div>
-              </div>
-            </div>
-            <div className="shelf-plank" style={shelfPlankStyle} />
+              );
+            })}
+            <div style={cabinetPlinthStyle} />
           </div>
-        );
-      })}
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: -8, marginRight: 8, opacity: 0.92 }}>
+            <ShelfPlant size={42} />
+          </div>
+        </div>
+      )}
 
       <div style={{ marginTop: 20 }}>
         {creating ? (
@@ -1757,7 +1916,8 @@ function StatPill({ icon, value, label, highlight }) {
   );
 }
 
-function Spine({ p, onOpen, onEdit, dimmed, hideSeriesTag }) {
+function Spine({ p, onOpen, onEdit, dimmed, hideSeriesTag, onDark }) {
+  const captionColor = onDark ? "rgba(246,236,214,0.75)" : COLORS.inkSoft;
   return (
     <div style={{ position: "relative", display: "flex", flexDirection: "column", alignItems: "center" }}>
       <button onClick={onEdit} title="Edit" style={{ position: "absolute", top: -8, right: -8, width: 22, height: 22, borderRadius: "50%", background: COLORS.paperRaised, border: `1px solid ${COLORS.paperLine}`, color: COLORS.inkSoft, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2 }}>
@@ -1766,10 +1926,17 @@ function Spine({ p, onOpen, onEdit, dimmed, hideSeriesTag }) {
       <button className="spine-face" onClick={() => onOpen(p.id)} title={p.name} style={{ writingMode: "vertical-rl", textOrientation: "mixed", background: p.color, color: COLORS.ink, border: "none", borderRadius: "3px 3px 2px 2px", width: 34, height: 130, cursor: "pointer", fontFamily: "'Fraunces', serif", fontSize: 13, fontWeight: 600, letterSpacing: "0.03em", padding: "10px 0", boxShadow: dimmed ? "none" : "0 3px 10px rgba(0,0,0,0.45)" }}>
         {p.name}
       </button>
-      {!hideSeriesTag && p.series && (
-        <div title={p.series} style={{ display: "flex", alignItems: "center", gap: 3, marginTop: 6, maxWidth: 70, fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, color: COLORS.inkSoft, textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          <Layers size={9} style={{ flexShrink: 0 }} /> {p.series}
-        </div>
+      {!hideSeriesTag && (
+        <>
+          {p.series && (
+            <div title={p.series} style={{ display: "flex", alignItems: "center", gap: 3, marginTop: 6, maxWidth: 70, fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, color: captionColor, textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              <Layers size={9} style={{ flexShrink: 0 }} /> {p.series}
+            </div>
+          )}
+          <div style={{ marginTop: p.series ? 2 : 6, fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, color: captionColor, whiteSpace: "nowrap" }}>
+            {(p.wordCount || 0).toLocaleString()} words
+          </div>
+        </>
       )}
     </div>
   );
@@ -1778,24 +1945,34 @@ function Spine({ p, onOpen, onEdit, dimmed, hideSeriesTag }) {
 // Wraps every book that shares a series in a single hand-drawn dashed box,
 // with a little washi-tape label pinned to the top holding the series name —
 // so instead of a tiny tag under each spine, the shelf visibly groups them.
-function SeriesCluster({ series, projects, onOpen, onEdit }) {
+// A small caption underneath rolls up the series as a whole (book count +
+// combined word count), since the individual spines inside skip their own
+// word count to keep the cluster from getting visually noisy.
+function SeriesCluster({ series, projects, onOpen, onEdit, onDark }) {
+  const totalWords = projects.reduce((sum, p) => sum + (p.wordCount || 0), 0);
+  const captionColor = onDark ? "rgba(246,236,214,0.75)" : COLORS.inkSoft;
   return (
-    <div
-      style={{
-        position: "relative",
-        display: "flex",
-        alignItems: "flex-end",
-        gap: 12,
-        padding: "22px 16px 8px 16px",
-        border: `2px dashed ${COLORS.paperLine}`,
-        borderRadius: 6,
-        background: "rgba(211,172,114,0.045)",
-      }}
-    >
-      <WashiLabel text={series} />
-      {projects.map((p) => (
-        <Spine key={p.id} p={p} onOpen={onOpen} onEdit={() => onEdit(p.id)} hideSeriesTag />
-      ))}
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+      <div
+        style={{
+          position: "relative",
+          display: "flex",
+          alignItems: "flex-end",
+          gap: 12,
+          padding: "22px 16px 8px 16px",
+          border: "2px dashed rgba(246,222,156,0.4)",
+          borderRadius: 6,
+          background: "rgba(246,222,156,0.07)",
+        }}
+      >
+        <WashiLabel text={series} />
+        {projects.map((p) => (
+          <Spine key={p.id} p={p} onOpen={onOpen} onEdit={() => onEdit(p.id)} hideSeriesTag />
+        ))}
+      </div>
+      <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, color: captionColor, whiteSpace: "nowrap" }}>
+        {projects.length} {projects.length === 1 ? "book" : "books"} · {totalWords.toLocaleString()} words
+      </div>
     </div>
   );
 }
@@ -2027,16 +2204,125 @@ function MetaModal({ project, allSeries = [], onClose, onUpdate, confirmDelete, 
 
 /* ---------------- WORKSPACE ---------------- */
 
+// Maps a search result's section back to the tab it lives in and the icon
+// used to label that section in the results list.
+const SEARCH_SECTIONS = {
+  characters: { label: "Characters", icon: Users },
+  wiki: { label: "Wiki", icon: BookOpen },
+  timeline: { label: "Timeline", icon: Clock },
+  brainstorm: { label: "Brainstorm", icon: Lightbulb },
+  manuscript: { label: "Manuscript", icon: PenLine },
+};
+
+// Live-filters the whole project (characters, wiki, timeline, brainstorm,
+// scenes) as you type, grouped by section in the order they appear in
+// SEARCH_SECTIONS. Picking a result jumps straight to that tab with the
+// matching item already open in the editor.
+function SearchModal({ project, onJump, onClose }) {
+  const [query, setQuery] = useState("");
+  const items = useMemo(() => buildSearchIndex(project), [project]);
+  const q = query.trim().toLowerCase();
+  const results = q ? items.filter((it) => it.searchable.includes(q)) : [];
+
+  const grouped = [];
+  const seen = new Set();
+  results.forEach((r) => {
+    if (!seen.has(r.type)) {
+      seen.add(r.type);
+      grouped.push({ type: r.type, items: [] });
+    }
+    grouped.find((g) => g.type === r.type).items.push(r);
+  });
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(43,42,40,0.45)", display: "flex", alignItems: "flex-start", justifyContent: "center", zIndex: 50, padding: "10vh 20px 20px" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: COLORS.paperRaised, borderRadius: 8, padding: 20, width: 460, maxWidth: "100%", maxHeight: "72vh", display: "flex", flexDirection: "column", border: `1px solid ${COLORS.paperLine}` }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <span style={{ fontFamily: "'Fraunces', serif", fontSize: 18, fontWeight: 600 }}>Search this story</span>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: COLORS.inkSoft, cursor: "pointer" }}><X size={16} /></button>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, ...getInputStyle(), padding: "8px 10px", flexShrink: 0 }}>
+          <Search size={14} color={COLORS.inkSoft} />
+          <input
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search characters, wiki, timeline, brainstorm, scenes…"
+            style={{ border: "none", outline: "none", background: "transparent", fontFamily: "'Source Serif 4', serif", fontSize: 14, flex: 1 }}
+          />
+        </div>
+        <div className="atelier-scroll" style={{ marginTop: 14, overflowY: "auto", flex: 1 }}>
+          {!q && (
+            <p style={{ fontSize: 13, color: COLORS.inkSoft, fontStyle: "italic" }}>
+              Start typing to search everywhere in this story at once.
+            </p>
+          )}
+          {q && results.length === 0 && (
+            <p style={{ fontSize: 13, color: COLORS.inkSoft, fontStyle: "italic" }}>No matches for "{query}".</p>
+          )}
+          {grouped.map((g) => {
+            const section = SEARCH_SECTIONS[g.type];
+            const Icon = section.icon;
+            return (
+              <div key={g.type} style={{ marginBottom: 16 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                  <Icon size={12} color={COLORS.wine} />
+                  <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", color: COLORS.wine }}>
+                    {section.label}
+                  </span>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {g.items.map((item) => {
+                    const snippet = snippetFor(item.content, q) || item.meta;
+                    return (
+                      <button
+                        key={item.id}
+                        onClick={() => onJump(item.type, item.id)}
+                        style={{
+                          textAlign: "left", padding: "8px 10px", borderRadius: 5, cursor: "pointer",
+                          border: `1px solid ${COLORS.paperLine}`, background: "transparent",
+                        }}
+                      >
+                        <div style={{ fontFamily: "'Fraunces', serif", fontSize: 14, fontWeight: 600, color: COLORS.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {item.title}
+                        </div>
+                        {snippet && (
+                          <div style={{ fontSize: 11.5, color: COLORS.inkSoft, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {snippet}
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function WorkspaceView({
   project, onBack, tab, setTab, editorId, setEditorId, saveState, onRename,
-  addCharacter, addRelationship, removeRelationship, updateMapPositions, addEvent, insertEvent, addWiki, addBrainstormEntry, addMoodboardItem, addScene, moveItem, removeItem, patchItem, exportBible, exportManuscript, onUpdateSettings,
+  addCharacter, addRelationship, removeRelationship, updateMapPositions, addEvent, insertEvent, addWiki, addBrainstormEntry, addMoodboardItem, addScene, moveItem, removeItem, patchItem, exportBible, exportManuscript, onUpdateSettings, sessionWords,
 }) {
+  const [showSearch, setShowSearch] = useState(false);
+
   if (!project) {
     return <div style={{ padding: 40 }}><BackButton onBack={onBack} /><p style={{ color: COLORS.inkSoft, marginTop: 20 }}>Couldn't find that world.</p></div>;
   }
 
+  const jumpToResult = (type, id) => {
+    setTab(type);
+    setEditorId(id);
+    setShowSearch(false);
+  };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+      {showSearch && <SearchModal project={project} onJump={jumpToResult} onClose={() => setShowSearch(false)} />}
       <div style={{ padding: "18px 24px 0 24px" }}>
         <BackButton onBack={onBack} />
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginTop: 10, flexWrap: "wrap", gap: 8 }}>
@@ -2045,6 +2331,7 @@ function WorkspaceView({
             <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: saveState === "error" ? COLORS.wine : COLORS.inkSoft, opacity: saveState === "idle" ? 0 : 1, transition: "opacity 0.3s" }}>
               {saveState === "saving" ? "saving…" : saveState === "saved" ? "saved" : saveState === "error" ? "save failed" : ""}
             </span>
+            <button onClick={() => setShowSearch(true)} style={getExportBtnStyle()}><Search size={12} /> Search</button>
             <button onClick={exportBible} style={getExportBtnStyle()}><Download size={12} /> Bible</button>
             <button onClick={exportManuscript} style={getExportBtnStyle()}><Download size={12} /> Manuscript</button>
           </div>
@@ -2105,6 +2392,7 @@ function WorkspaceView({
             onDelete={(id) => { removeItem("scenes", id); setEditorId(null); }}
             onMove={(id, dir) => moveItem("scenes", id, dir)}
             onUpdateSettings={onUpdateSettings}
+            sessionWords={sessionWords}
           />
         )}
         {tab === "analytics" && <AnalyticsPane project={project} onUpdateSettings={onUpdateSettings} />}
@@ -3314,7 +3602,7 @@ function MoodboardCard({ item, onRemove, onMove, isFirst, isLast }) {
   );
 }
 
-function ManuscriptPane({ project, editorId, setEditorId, onAdd, onPatch, onDelete, onMove, onUpdateSettings }) {
+function ManuscriptPane({ project, editorId, setEditorId, onAdd, onPatch, onDelete, onMove, onUpdateSettings, sessionWords }) {
   const [collapsed, setCollapsed] = useState({});
   const [readingMode, setReadingMode] = useState(false);
   const [showGoals, setShowGoals] = useState(false);
@@ -3411,6 +3699,7 @@ function ManuscriptPane({ project, editorId, setEditorId, onAdd, onPatch, onDele
         <div style={{ display: "flex", gap: 18, flexWrap: "wrap" }}>
           <StatInline label="words" value={totalWords.toLocaleString()} />
           <StatInline label="pages" value={pages} />
+          <StatInline label="this session" value={`+${(sessionWords || 0).toLocaleString()}`} />
         </div>
         <div style={{ flex: 1, minWidth: 160 }}>
           <GoalProgressBar current={totalWords} goal={project.wordGoal} />
@@ -3514,6 +3803,60 @@ function ManuscriptPane({ project, editorId, setEditorId, onAdd, onPatch, onDele
 
 /* ---------------- ANALYTICS (per project) ---------------- */
 
+// A GitHub-style contribution grid: one column per week, one cell per day,
+// shaded by how many words were written that day (computeDailyDeltas turns
+// the existing cumulative `history` into daily totals — no new data is
+// stored for this). Spans the last 14 weeks, padded so the grid lines up on
+// Sundays like a normal calendar week.
+function DailyHeatmap({ history }) {
+  const deltaMap = useMemo(() => computeDailyDeltas(history), [history]);
+
+  const WEEKS = 14;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const days = [];
+  for (let i = WEEKS * 7 - 1; i >= 0; i--) {
+    days.push(new Date(today.getTime() - i * 86400000));
+  }
+  const leadingPad = days[0].getDay(); // 0 = Sunday
+  const cells = [...Array(leadingPad).fill(null), ...days];
+  const weeks = [];
+  for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+
+  const maxVal = Math.max(1, ...Object.values(deltaMap));
+  const colorFor = (val) => {
+    if (!val) return "transparent";
+    const ratio = val / maxVal;
+    if (ratio > 0.75) return COLORS.wine;
+    if (ratio > 0.5) return COLORS.wineSoft;
+    if (ratio > 0.25) return COLORS.sage;
+    return COLORS.sageSoft;
+  };
+
+  return (
+    <div style={{ overflowX: "auto", paddingBottom: 4 }}>
+      <div style={{ display: "flex", gap: 3, width: "fit-content" }}>
+        {weeks.map((week, wi) => (
+          <div key={wi} style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+            {week.map((d, di) => {
+              if (!d) return <div key={di} style={{ width: 11, height: 11 }} />;
+              const iso = localISO(d);
+              const val = deltaMap[iso] || 0;
+              return (
+                <div
+                  key={di}
+                  title={`${iso} — ${val.toLocaleString()} words`}
+                  style={{ width: 11, height: 11, borderRadius: 2, background: colorFor(val), border: `1px solid ${COLORS.paperLine}` }}
+                />
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function AnalyticsPane({ project, onUpdateSettings }) {
   const [showGoals, setShowGoals] = useState(false);
   const totalWords = totalWordsForProject(project);
@@ -3566,6 +3909,15 @@ function AnalyticsPane({ project, onUpdateSettings }) {
           onClose={() => setShowGoals(false)}
         />
       )}
+
+      <div style={{ marginBottom: 32 }}>
+        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", color: COLORS.gold, marginBottom: 10 }}>Daily activity</div>
+        {(project.history || []).length === 0 ? (
+          <p style={{ fontSize: 13, color: COLORS.inkSoft, fontStyle: "italic" }}>Write a little today and this will start to fill in.</p>
+        ) : (
+          <DailyHeatmap history={project.history} />
+        )}
+      </div>
 
       <div style={{ marginBottom: 32 }}>
         <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", color: COLORS.wine, marginBottom: 10 }}>Words over time</div>
