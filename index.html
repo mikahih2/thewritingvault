@@ -471,6 +471,8 @@ const blankProject = (name, color, genre) => ({
   characterMapPositions: {},
   moodboard: [],
   brainstorm: [],
+  wordsPerPage: 275,
+  wordGoal: 0,
 });
 
 const RELATIONSHIP_PRESETS = ["Family", "Love Interest"];
@@ -495,7 +497,7 @@ const normalizeProject = (data) => {
   });
   const wiki = (data.wiki || []).map((w) => ({ category: "Uncategorized", ...w }));
   const scenes = (data.scenes || []).map((s) => ({ chapter: "", ...s }));
-  return { history: [], characterMapPositions: {}, moodboard: [], brainstorm: [], ...data, characters, wiki, scenes };
+  return { history: [], characterMapPositions: {}, moodboard: [], brainstorm: [], wordsPerPage: 275, wordGoal: 0, ...data, characters, wiki, scenes };
 };
 
 const TABS = [
@@ -1134,6 +1136,11 @@ export default function StoryAtelier() {
     });
   };
 
+  // Patches top-level project settings (words-per-page, word count goal)
+  // straight onto the project — doesn't touch the writing streak, since
+  // changing a setting isn't the same as writing.
+  const updateProjectSettings = (patch) => updateProject((p) => ({ ...p, ...patch }));
+
   const handleCreateProject = async () => {
     if (!newName.trim()) return;
     const id = uid();
@@ -1478,6 +1485,7 @@ ${parts.join("\n")}
           patchItem={patchItem}
           exportBible={exportBible}
           exportManuscript={exportManuscript}
+          onUpdateSettings={updateProjectSettings}
         />
       )}
     </div>
@@ -2021,7 +2029,7 @@ function MetaModal({ project, allSeries = [], onClose, onUpdate, confirmDelete, 
 
 function WorkspaceView({
   project, onBack, tab, setTab, editorId, setEditorId, saveState, onRename,
-  addCharacter, addRelationship, removeRelationship, updateMapPositions, addEvent, insertEvent, addWiki, addBrainstormEntry, addMoodboardItem, addScene, moveItem, removeItem, patchItem, exportBible, exportManuscript,
+  addCharacter, addRelationship, removeRelationship, updateMapPositions, addEvent, insertEvent, addWiki, addBrainstormEntry, addMoodboardItem, addScene, moveItem, removeItem, patchItem, exportBible, exportManuscript, onUpdateSettings,
 }) {
   if (!project) {
     return <div style={{ padding: 40 }}><BackButton onBack={onBack} /><p style={{ color: COLORS.inkSoft, marginTop: 20 }}>Couldn't find that world.</p></div>;
@@ -2096,9 +2104,10 @@ function WorkspaceView({
             onPatch={(id, patch) => patchItem("scenes", id, patch)}
             onDelete={(id) => { removeItem("scenes", id); setEditorId(null); }}
             onMove={(id, dir) => moveItem("scenes", id, dir)}
+            onUpdateSettings={onUpdateSettings}
           />
         )}
-        {tab === "analytics" && <AnalyticsPane project={project} />}
+        {tab === "analytics" && <AnalyticsPane project={project} onUpdateSettings={onUpdateSettings} />}
       </div>
     </div>
   );
@@ -2114,6 +2123,87 @@ function BackButton({ onBack }) {
 
 function getExportBtnStyle() {
   return { display: "flex", alignItems: "center", gap: 5, fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: "0.03em", padding: "6px 10px", borderRadius: 4, border: `1px solid ${COLORS.paperLine}`, background: "transparent", color: COLORS.inkSoft, cursor: "pointer" };
+}
+
+// A small labeled number, used for the word/page counts in the Manuscript
+// tab's stats bar — kept separate from StatCard since it's meant to sit
+// inline in a slim bar rather than as its own boxed card.
+function StatInline({ label, value }) {
+  return (
+    <div style={{ display: "flex", alignItems: "baseline", gap: 5, whiteSpace: "nowrap" }}>
+      <span style={{ fontFamily: "'Fraunces', serif", fontSize: 16, fontWeight: 700, color: COLORS.ink }}>{value}</span>
+      <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.04em", color: COLORS.inkSoft }}>{label}</span>
+    </div>
+  );
+}
+
+// Renders nothing when no goal is set (0 or unset), so it's safe to drop
+// into a layout unconditionally. Caps the filled portion at 100% even if
+// the goal's been exceeded, so the bar itself doesn't overflow its track.
+function GoalProgressBar({ current, goal }) {
+  if (!goal || goal <= 0) return null;
+  const pct = Math.min(100, Math.round((current / goal) * 100));
+  const hit = pct >= 100;
+  return (
+    <div style={{ width: "100%" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4, gap: 8 }}>
+        <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: COLORS.inkSoft, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          {current.toLocaleString()} / {goal.toLocaleString()} words
+        </span>
+        <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, fontWeight: 600, color: hit ? COLORS.sage : COLORS.wine, flexShrink: 0 }}>
+          {pct}%
+        </span>
+      </div>
+      <div style={{ height: 8, borderRadius: 999, background: COLORS.paper, border: `1px solid ${COLORS.paperLine}`, overflow: "hidden" }}>
+        <div style={{ height: "100%", width: `${pct}%`, background: hit ? COLORS.sage : COLORS.wine, borderRadius: 999, transition: "width 0.3s ease" }} />
+      </div>
+    </div>
+  );
+}
+
+// Small modal for the two per-project manuscript settings: how many words
+// count as one page (used only to estimate a page count from the word
+// count — there's no pagination happening), and the overall word-count
+// goal that drives the progress bars in Manuscript and Analytics.
+function ManuscriptGoalsModal({ wordsPerPage, wordGoal, onSave, onClose }) {
+  const [wpp, setWpp] = useState(String(wordsPerPage || 275));
+  const [goal, setGoal] = useState(wordGoal ? String(wordGoal) : "");
+
+  const save = () => {
+    const parsedWpp = parseInt(wpp, 10);
+    const parsedGoal = parseInt(goal, 10);
+    onSave({
+      wordsPerPage: Number.isFinite(parsedWpp) && parsedWpp > 0 ? parsedWpp : 275,
+      wordGoal: Number.isFinite(parsedGoal) && parsedGoal > 0 ? parsedGoal : 0,
+    });
+    onClose();
+  };
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(43,42,40,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: 20 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: COLORS.paperRaised, borderRadius: 8, padding: 24, width: 320, maxWidth: "100%", border: `1px solid ${COLORS.paperLine}` }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <span style={{ fontFamily: "'Fraunces', serif", fontSize: 18, fontWeight: 600 }}>Manuscript goals</span>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: COLORS.inkSoft, cursor: "pointer" }}><X size={16} /></button>
+        </div>
+        <Field label="Words per page">
+          <input type="number" min="1" value={wpp} onChange={(e) => setWpp(e.target.value)} style={getInputStyle()} />
+        </Field>
+        <p style={{ fontSize: 11.5, color: COLORS.inkSoft, marginTop: -10, marginBottom: 16, lineHeight: 1.4 }}>
+          Used to estimate a page count from your word count — 275 is a common manuscript-page estimate.
+        </p>
+        <Field label="Word count goal">
+          <input type="number" min="0" value={goal} onChange={(e) => setGoal(e.target.value)} style={getInputStyle()} placeholder="e.g. 80000" />
+        </Field>
+        <p style={{ fontSize: 11.5, color: COLORS.inkSoft, marginTop: -10, marginBottom: 16, lineHeight: 1.4 }}>
+          Leave blank for no goal — the progress bar only shows up once this is set.
+        </p>
+        <button onClick={save} style={{ ...getExportBtnStyle(), background: COLORS.wine, color: COLORS.ink, border: "none", width: "100%", justifyContent: "center" }}>
+          Save
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function CharactersSection({ project, addCharacter, addRelationship, removeRelationship, updateMapPositions, editorId, setEditorId, patchItem, removeItem }) {
@@ -3224,13 +3314,18 @@ function MoodboardCard({ item, onRemove, onMove, isFirst, isLast }) {
   );
 }
 
-function ManuscriptPane({ project, editorId, setEditorId, onAdd, onPatch, onDelete, onMove }) {
+function ManuscriptPane({ project, editorId, setEditorId, onAdd, onPatch, onDelete, onMove, onUpdateSettings }) {
   const [collapsed, setCollapsed] = useState({});
   const [readingMode, setReadingMode] = useState(false);
+  const [showGoals, setShowGoals] = useState(false);
   const scenes = project.scenes;
   const scene = scenes.find((s) => s.id === editorId);
   const hasChapters = scenes.some((s) => (s.chapter || "").trim());
   const allChapters = Array.from(new Set(scenes.map((s) => (s.chapter || "").trim()).filter(Boolean)));
+
+  const totalWords = totalWordsForProject(project);
+  const wordsPerPage = project.wordsPerPage > 0 ? project.wordsPerPage : 275;
+  const pages = (totalWords / wordsPerPage).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
   const toggle = (key) => setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }));
 
@@ -3311,7 +3406,28 @@ function ManuscriptPane({ project, editorId, setEditorId, onAdd, onPatch, onDele
   }
 
   return (
-    <>
+    <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column" }}>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 16, padding: "12px 16px", borderBottom: `1px solid ${COLORS.paperLine}` }}>
+        <div style={{ display: "flex", gap: 18, flexWrap: "wrap" }}>
+          <StatInline label="words" value={totalWords.toLocaleString()} />
+          <StatInline label="pages" value={pages} />
+        </div>
+        <div style={{ flex: 1, minWidth: 160 }}>
+          <GoalProgressBar current={totalWords} goal={project.wordGoal} />
+        </div>
+        <button onClick={() => setShowGoals(true)} style={getExportBtnStyle()}>
+          <Settings size={12} /> Goals
+        </button>
+      </div>
+      {showGoals && (
+        <ManuscriptGoalsModal
+          wordsPerPage={project.wordsPerPage}
+          wordGoal={project.wordGoal}
+          onSave={onUpdateSettings}
+          onClose={() => setShowGoals(false)}
+        />
+      )}
+      <div className="atelier-tabpane-row" style={{ flex: 1, minHeight: 0, display: "flex", overflow: "hidden" }}>
       <div className="atelier-scroll atelier-sidebar" style={{ width: 250, borderRight: `1px solid ${COLORS.paperLine}`, padding: 16, overflowY: "auto" }}>
         <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
           <button onClick={() => onAdd()} style={{ display: "flex", alignItems: "center", gap: 6, flex: 1, justifyContent: "center", fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, padding: "8px 0", borderRadius: 4, border: `1px dashed ${COLORS.paperLine}`, background: "transparent", color: COLORS.wine, cursor: "pointer" }}>
@@ -3391,16 +3507,20 @@ function ManuscriptPane({ project, editorId, setEditorId, onAdd, onPatch, onDele
           </div>
         )}
       </div>
-    </>
+      </div>
+    </div>
   );
 }
 
 /* ---------------- ANALYTICS (per project) ---------------- */
 
-function AnalyticsPane({ project }) {
+function AnalyticsPane({ project, onUpdateSettings }) {
+  const [showGoals, setShowGoals] = useState(false);
   const totalWords = totalWordsForProject(project);
   const sceneCount = project.scenes.length;
   const avgWords = sceneCount ? Math.round(totalWords / sceneCount) : 0;
+  const wordsPerPage = project.wordsPerPage > 0 ? project.wordsPerPage : 275;
+  const pages = (totalWords / wordsPerPage).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
   const history = [...(project.history || [])].sort((a, b) => (a.date < b.date ? -1 : 1));
   const last = history[history.length - 1];
   const prev = history[history.length - 2];
@@ -3418,12 +3538,34 @@ function AnalyticsPane({ project }) {
 
   return (
     <div className="atelier-scroll" style={{ flex: 1, padding: 24, overflowY: "auto" }}>
-      <div style={{ display: "flex", gap: 12, marginBottom: 28, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 12, marginBottom: 20, flexWrap: "wrap" }}>
         <StatCard label="Total words" value={totalWords.toLocaleString()} />
+        <StatCard label="Pages" value={pages} />
         <StatCard label="Scenes" value={sceneCount} />
         <StatCard label="Avg words / scene" value={avgWords.toLocaleString()} />
         <StatCard label="Written today" value={Math.max(wordsToday, 0).toLocaleString()} accent />
       </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 28 }}>
+        <div style={{ flex: 1, minWidth: 200 }}>
+          {project.wordGoal > 0 ? (
+            <GoalProgressBar current={totalWords} goal={project.wordGoal} />
+          ) : (
+            <p style={{ fontSize: 12, color: COLORS.inkSoft, fontStyle: "italic", margin: 0 }}>No word count goal set yet.</p>
+          )}
+        </div>
+        <button onClick={() => setShowGoals(true)} style={getExportBtnStyle()}>
+          <Settings size={12} /> Goal
+        </button>
+      </div>
+      {showGoals && (
+        <ManuscriptGoalsModal
+          wordsPerPage={project.wordsPerPage}
+          wordGoal={project.wordGoal}
+          onSave={onUpdateSettings}
+          onClose={() => setShowGoals(false)}
+        />
+      )}
 
       <div style={{ marginBottom: 32 }}>
         <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", color: COLORS.wine, marginBottom: 10 }}>Words over time</div>
