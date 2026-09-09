@@ -225,6 +225,7 @@ async function recoverOrphanedProjects(uid, idx) {
           archived: false,
           wordCount: (data.scenes || []).reduce((sum, s) => sum + countWords(s.content), 0),
           series: "",
+          trashedAt: null,
         });
       } catch (e) { /* unreadable entry, skip it */ }
     });
@@ -543,6 +544,7 @@ const blankProject = (name, color, genre) => ({
   brainstorm: [],
   wordsPerPage: 275,
   wordGoal: 0,
+  trash: [],
 });
 
 const RELATIONSHIP_PRESETS = ["Family", "Love Interest"];
@@ -553,6 +555,40 @@ const relationshipColor = (label) => {
   if (l === "love interest") return COLORS.wine;
   return COLORS.gold;
 };
+
+// How many days trashed items and trashed projects are kept before being
+// purged for good. Nothing in this app offers an immediate "delete forever"
+// — this window is the only path to permanent deletion, and it's always
+// time-based rather than a button someone can click by mistake.
+const TRASH_RETENTION_DAYS = 30;
+
+// Days elapsed since an ISO timestamp, for trash countdowns and purging.
+const daysSince = (isoString) => {
+  if (!isoString) return 0;
+  const then = new Date(isoString).getTime();
+  if (Number.isNaN(then)) return 0;
+  return (Date.now() - then) / (24 * 60 * 60 * 1000);
+};
+
+// Drops any trashed item past the retention window. Called whenever a
+// project's data is loaded so old trash quietly ages out without needing a
+// server-side job — if this changes what's in trash, the caller persists it.
+const purgeExpiredTrash = (project) => {
+  const trash = (project.trash || []).filter((t) => daysSince(t.deletedAt) < TRASH_RETENTION_DAYS);
+  return trash.length === (project.trash || []).length ? project : { ...project, trash };
+};
+
+// A short, human label for a trashed item, since each collection names
+// itself differently (character.name vs wiki.title vs scene.title, etc).
+function trashItemLabel(collection, item) {
+  if (collection === "characters") return item.name || "Untitled character";
+  if (collection === "wiki") return item.title || "Untitled entry";
+  if (collection === "timeline") return item.title || "Untitled event";
+  if (collection === "brainstorm") return item.title || (item.body ? item.body.slice(0, 40) : "Untitled");
+  if (collection === "scenes") return item.title || "Untitled scene";
+  if (collection === "moodboard") return item.caption || "Untitled image";
+  return "Untitled";
+}
 
 // Migrates older saved data where relationships were just an array of character ids
 // into the newer { id, targetId, label } shape.
@@ -567,7 +603,7 @@ const normalizeProject = (data) => {
   });
   const wiki = (data.wiki || []).map((w) => ({ category: "Uncategorized", ...w }));
   const scenes = (data.scenes || []).map((s) => ({ chapter: "", ...s }));
-  return { history: [], characterMapPositions: {}, moodboard: [], brainstorm: [], wordsPerPage: 275, wordGoal: 0, ...data, characters, wiki, scenes };
+  return { history: [], characterMapPositions: {}, moodboard: [], brainstorm: [], wordsPerPage: 275, wordGoal: 0, trash: [], ...data, characters, wiki, scenes };
 };
 
 const TABS = [
@@ -934,7 +970,17 @@ export default function StoryAtelier() {
           await storage.set("projects-index", JSON.stringify(idx));
         }
       }
-      setProjects(idx.map((p) => ({ status: "Brainstorming", archived: false, wordCount: 0, series: "", ...p })));
+      const normalizedIdx = idx.map((p) => ({ status: "Brainstorming", archived: false, wordCount: 0, series: "", trashedAt: null, ...p }));
+      // Projects trashed longer than TRASH_RETENTION_DAYS are purged for
+      // good here: their stored data is deleted and they drop out of the
+      // index entirely, rather than sticking around forever as dead weight.
+      const expired = normalizedIdx.filter((p) => p.trashedAt && daysSince(p.trashedAt) >= TRASH_RETENTION_DAYS);
+      const kept = normalizedIdx.filter((p) => !(p.trashedAt && daysSince(p.trashedAt) >= TRASH_RETENTION_DAYS));
+      if (expired.length > 0) {
+        await Promise.all(expired.map((p) => storage.delete(`project:${p.id}`).catch((e) => console.error("Failed to purge trashed project", p.id, e))));
+        await storage.set("projects-index", JSON.stringify(kept));
+      }
+      setProjects(kept);
     } catch {
       setProjects([]);
     }
@@ -1105,12 +1151,16 @@ export default function StoryAtelier() {
         }
       }
       const normalized = normalizeProject(data);
-      setProject(normalized);
+      const cleaned = normalized ? purgeExpiredTrash(normalized) : normalized;
+      setProject(cleaned);
+      if (cleaned && cleaned !== normalized) {
+        persistProject(selectedId, cleaned);
+      }
       // Marks the word count at the moment this project was opened, so the
       // Manuscript tab can show "words written this session" as a live
       // delta from here — resets naturally every time a project is opened,
       // which is exactly what "session" should mean.
-      setSessionBaseline(totalWordsForProject(normalized || { scenes: [] }));
+      setSessionBaseline(totalWordsForProject(cleaned || { scenes: [] }));
       setEditorId(null);
       setTab("brainstorm");
     })();
@@ -1222,7 +1272,7 @@ export default function StoryAtelier() {
   const handleCreateProject = async () => {
     if (!newName.trim()) return;
     const id = uid();
-    const entry = { id, name: newName.trim(), color: newColor, genre: "", status: "Brainstorming", archived: false, wordCount: 0, series: "" };
+    const entry = { id, name: newName.trim(), color: newColor, genre: "", status: "Brainstorming", archived: false, wordCount: 0, series: "", trashedAt: null };
     const data = blankProject(newName.trim(), newColor);
     const idx = [...(projects || []), entry];
     setProjects(idx);
@@ -1244,17 +1294,21 @@ export default function StoryAtelier() {
     setMetaEditId(null);
   };
 
+  // Moves a whole project to trash rather than deleting it outright — its
+  // data stays exactly where it is in storage, just marked with a
+  // timestamp. loadAllData purges anything past TRASH_RETENTION_DAYS.
   const handleDelete = async (id) => {
-    const idx = (projects || []).filter((p) => p.id !== id);
+    const idx = (projects || []).map((p) => (p.id === id ? { ...p, trashedAt: new Date().toISOString() } : p));
     setProjects(idx);
     await persistIndex(idx);
-    try {
-      await storage.delete(`project:${id}`);
-    } catch (e) {
-      console.error("Failed to delete project data", e);
-    }
     setConfirmDeleteId(null);
     setMetaEditId(null);
+  };
+
+  const handleRestoreProject = async (id) => {
+    const idx = (projects || []).map((p) => (p.id === id ? { ...p, trashedAt: null } : p));
+    setProjects(idx);
+    await persistIndex(idx);
   };
 
   const addCharacter = (group) => {
@@ -1322,6 +1376,7 @@ export default function StoryAtelier() {
 
   const removeItem = (collection, id) =>
     updateProject((p) => {
+      const removed = (p[collection] || []).find((x) => x.id === id);
       const next = { ...p, [collection]: p[collection].filter((x) => x.id !== id) };
       if (collection === "characters") {
         // strip any relationships on remaining characters that pointed at the one just deleted
@@ -1336,8 +1391,27 @@ export default function StoryAtelier() {
           linkedCharIds: (ev.linkedCharIds || []).filter((cid) => cid !== id),
         }));
       }
+      // Nothing gets deleted outright — it moves to this project's trash,
+      // where it sits for TRASH_RETENTION_DAYS before purgeExpiredTrash
+      // clears it out. Restoring a character doesn't re-link relationships
+      // or timeline mentions that were stripped above; those need to be
+      // re-added by hand if wanted.
+      if (removed) {
+        next.trash = [{ trashId: uid(), collection, deletedAt: new Date().toISOString(), item: removed }, ...(p.trash || [])];
+      }
       return next;
     }, collection === "scenes");
+
+  const restoreFromTrash = (trashId) =>
+    updateProject((p) => {
+      const entry = (p.trash || []).find((t) => t.trashId === trashId);
+      if (!entry) return p;
+      return {
+        ...p,
+        [entry.collection]: [...(p[entry.collection] || []), entry.item],
+        trash: p.trash.filter((t) => t.trashId !== trashId),
+      };
+    });
 
   const patchItem = (collection, id, patch) =>
     updateProject((p) => ({ ...p, [collection]: p[collection].map((x) => (x.id === id ? { ...x, ...patch } : x)) }), collection === "scenes");
@@ -1531,6 +1605,7 @@ ${parts.join("\n")}
           confirmDeleteId={confirmDeleteId}
           setConfirmDeleteId={setConfirmDeleteId}
           onDelete={handleDelete}
+          onRestoreProject={handleRestoreProject}
           showArchived={showArchived}
           setShowArchived={setShowArchived}
           globalTotalWords={globalTotalWords}
@@ -1566,6 +1641,7 @@ ${parts.join("\n")}
           exportManuscript={exportManuscript}
           onUpdateSettings={updateProjectSettings}
           sessionWords={sessionWords}
+          onRestoreItem={restoreFromTrash}
         />
       )}
     </div>
@@ -1794,10 +1870,12 @@ function FontImport() {
 function ShelfView({
   projects, onOpen, creating, setCreating, newName, setNewName, newColor, setNewColor, onCreate,
   metaEditId, setMetaEditId, onUpdateMeta, confirmDeleteId, setConfirmDeleteId, onDelete,
-  showArchived, setShowArchived, globalTotalWords, streak,
+  showArchived, setShowArchived, globalTotalWords, streak, onRestoreProject,
 }) {
-  const active = projects.filter((p) => !p.archived);
-  const archived = projects.filter((p) => p.archived);
+  const [showTrash, setShowTrash] = useState(false);
+  const active = projects.filter((p) => !p.archived && !p.trashedAt);
+  const archived = projects.filter((p) => p.archived && !p.trashedAt);
+  const trashed = projects.filter((p) => p.trashedAt);
   const editing = projects.find((p) => p.id === metaEditId);
   const allSeries = Array.from(new Set(projects.map((p) => (p.series || "").trim()).filter(Boolean))).sort();
 
@@ -1885,6 +1963,29 @@ function ShelfView({
                   <Spine key={cluster.projects[0].id} p={cluster.projects[0]} onOpen={onOpen} onEdit={() => setMetaEditId(cluster.projects[0].id)} dimmed />
                 )
               )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {trashed.length > 0 && (
+        <div style={{ marginTop: 24 }}>
+          <button onClick={() => setShowTrash(!showTrash)} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: COLORS.inkSoft, cursor: "pointer", fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 }}>
+            <Trash2 size={13} /> Trash ({trashed.length}) {showTrash ? "▲" : "▼"}
+          </button>
+          {showTrash && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 14, maxWidth: 420 }}>
+              {trashed.map((p) => {
+                const daysLeft = Math.max(0, Math.ceil(TRASH_RETENTION_DAYS - daysSince(p.trashedAt)));
+                return (
+                  <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderRadius: 6, border: `1px solid ${COLORS.paperLine}`, background: COLORS.paperRaised }}>
+                    <span style={{ width: 10, height: 10, borderRadius: "50%", background: p.color, flexShrink: 0 }} />
+                    <span style={{ flex: 1, minWidth: 0, fontFamily: "'Fraunces', serif", fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
+                    <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: COLORS.inkSoft, flexShrink: 0 }}>{daysLeft} {daysLeft === 1 ? "day" : "days"} left</span>
+                    <button onClick={() => onRestoreProject(p.id)} style={{ ...getExportBtnStyle(), flexShrink: 0 }}>Restore</button>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
@@ -2188,11 +2289,11 @@ function MetaModal({ project, allSeries = [], onClose, onUpdate, confirmDelete, 
             {project.archived ? <><ArchiveRestore size={13} /> Unarchive</> : <><Archive size={13} /> Archive</>}
           </button>
           {!confirmDelete ? (
-            <button onClick={onAskDelete} style={{ ...getExportBtnStyle(), display: "flex", alignItems: "center", gap: 6, color: COLORS.wine, borderColor: COLORS.wine }}><Trash2 size={13} /> Delete</button>
+            <button onClick={onAskDelete} style={{ ...getExportBtnStyle(), display: "flex", alignItems: "center", gap: 6, color: COLORS.wine, borderColor: COLORS.wine }}><Trash2 size={13} /> Move to trash</button>
           ) : (
-            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-              <span style={{ fontSize: 12, color: COLORS.wine, fontFamily: "'IBM Plex Mono', monospace" }}>Delete for good?</span>
-              <button onClick={onConfirmDelete} style={{ ...getExportBtnStyle(), background: COLORS.wine, color: COLORS.ink, border: "none" }}>Yes, delete</button>
+            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+              <span style={{ fontSize: 12, color: COLORS.wine, fontFamily: "'IBM Plex Mono', monospace" }}>Move to trash? Restorable for {TRASH_RETENTION_DAYS} days.</span>
+              <button onClick={onConfirmDelete} style={{ ...getExportBtnStyle(), background: COLORS.wine, color: COLORS.ink, border: "none" }}>Yes, move it</button>
               <button onClick={onCancelDelete} style={getExportBtnStyle()}>Cancel</button>
             </div>
           )}
@@ -2304,11 +2405,76 @@ function SearchModal({ project, onJump, onClose }) {
   );
 }
 
+// Everything currently sitting in this project's trash, grouped by section,
+// each with a "days left" countdown and a Restore button. Nothing here
+// offers permanent deletion — that only happens automatically, once
+// purgeExpiredTrash drops an entry past TRASH_RETENTION_DAYS.
+function TrashModal({ project, onRestore, onClose }) {
+  const entries = project.trash || [];
+  const grouped = [];
+  entries.forEach((t) => {
+    let g = grouped.find((x) => x.collection === t.collection);
+    if (!g) {
+      g = { collection: t.collection, items: [] };
+      grouped.push(g);
+    }
+    g.items.push(t);
+  });
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(43,42,40,0.45)", display: "flex", alignItems: "flex-start", justifyContent: "center", zIndex: 50, padding: "10vh 20px 20px" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: COLORS.paperRaised, borderRadius: 8, padding: 20, width: 440, maxWidth: "100%", maxHeight: "72vh", display: "flex", flexDirection: "column", border: `1px solid ${COLORS.paperLine}` }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+          <span style={{ fontFamily: "'Fraunces', serif", fontSize: 18, fontWeight: 600 }}>Trash</span>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: COLORS.inkSoft, cursor: "pointer" }}><X size={16} /></button>
+        </div>
+        <p style={{ fontSize: 11.5, color: COLORS.inkSoft, marginTop: 0, marginBottom: 14 }}>
+          Deleted items stay here for {TRASH_RETENTION_DAYS} days before they're gone for good.
+        </p>
+        <div className="atelier-scroll" style={{ overflowY: "auto", flex: 1 }}>
+          {entries.length === 0 && (
+            <p style={{ fontSize: 13, color: COLORS.inkSoft, fontStyle: "italic" }}>Nothing in the trash right now.</p>
+          )}
+          {grouped.map((g) => {
+            const section = SEARCH_SECTIONS[g.collection];
+            const Icon = section ? section.icon : Trash2;
+            return (
+              <div key={g.collection} style={{ marginBottom: 16 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                  <Icon size={12} color={COLORS.wine} />
+                  <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", color: COLORS.wine }}>
+                    {section ? section.label : g.collection}
+                  </span>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {g.items.map((t) => {
+                    const daysLeft = Math.max(0, Math.ceil(TRASH_RETENTION_DAYS - daysSince(t.deletedAt)));
+                    return (
+                      <div key={t.trashId} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 5, border: `1px solid ${COLORS.paperLine}` }}>
+                        <span style={{ flex: 1, minWidth: 0, fontFamily: "'Fraunces', serif", fontSize: 13.5, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {trashItemLabel(t.collection, t.item)}
+                        </span>
+                        <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: COLORS.inkSoft, flexShrink: 0 }}>{daysLeft} {daysLeft === 1 ? "day" : "days"} left</span>
+                        <button onClick={() => onRestore(t.trashId)} style={{ ...getExportBtnStyle(), flexShrink: 0 }}>Restore</button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function WorkspaceView({
   project, onBack, tab, setTab, editorId, setEditorId, saveState, onRename,
-  addCharacter, addRelationship, removeRelationship, updateMapPositions, addEvent, insertEvent, addWiki, addBrainstormEntry, addMoodboardItem, addScene, moveItem, removeItem, patchItem, exportBible, exportManuscript, onUpdateSettings, sessionWords,
+  addCharacter, addRelationship, removeRelationship, updateMapPositions, addEvent, insertEvent, addWiki, addBrainstormEntry, addMoodboardItem, addScene, moveItem, removeItem, patchItem, exportBible, exportManuscript, onUpdateSettings, sessionWords, onRestoreItem,
 }) {
   const [showSearch, setShowSearch] = useState(false);
+  const [showTrash, setShowTrash] = useState(false);
 
   if (!project) {
     return <div style={{ padding: 40 }}><BackButton onBack={onBack} /><p style={{ color: COLORS.inkSoft, marginTop: 20 }}>Couldn't find that world.</p></div>;
@@ -2320,9 +2486,12 @@ function WorkspaceView({
     setShowSearch(false);
   };
 
+  const trashCount = (project.trash || []).length;
+
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
       {showSearch && <SearchModal project={project} onJump={jumpToResult} onClose={() => setShowSearch(false)} />}
+      {showTrash && <TrashModal project={project} onRestore={onRestoreItem} onClose={() => setShowTrash(false)} />}
       <div style={{ padding: "18px 24px 0 24px" }}>
         <BackButton onBack={onBack} />
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginTop: 10, flexWrap: "wrap", gap: 8 }}>
@@ -2332,6 +2501,7 @@ function WorkspaceView({
               {saveState === "saving" ? "saving…" : saveState === "saved" ? "saved" : saveState === "error" ? "save failed" : ""}
             </span>
             <button onClick={() => setShowSearch(true)} style={getExportBtnStyle()}><Search size={12} /> Search</button>
+            <button onClick={() => setShowTrash(true)} style={getExportBtnStyle()}><Trash2 size={12} /> Trash{trashCount > 0 ? ` (${trashCount})` : ""}</button>
             <button onClick={exportBible} style={getExportBtnStyle()}><Download size={12} /> Bible</button>
             <button onClick={exportManuscript} style={getExportBtnStyle()}><Download size={12} /> Manuscript</button>
           </div>
