@@ -1455,6 +1455,15 @@ export default function StoryAtelier() {
           linkedCharIds: (ev.linkedCharIds || []).filter((cid) => cid !== id),
         }));
       }
+      if (collection === "scenes") {
+        // strip any timeline events that linked to the scene just deleted, so
+        // an event doesn't keep showing as "written" pointing at a scene
+        // that's now sitting in trash (or gone for good, once purged)
+        next.timeline = (next.timeline || []).map((ev) => ({
+          ...ev,
+          linkedSceneIds: (ev.linkedSceneIds || []).filter((sid) => sid !== id),
+        }));
+      }
       // Nothing gets deleted outright — it moves to this project's trash,
       // where it sits for TRASH_RETENTION_DAYS before purgeExpiredTrash
       // clears it out. Restoring a character doesn't re-link relationships
