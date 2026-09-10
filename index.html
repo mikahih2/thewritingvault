@@ -2271,23 +2271,28 @@ function Spine({ p, onOpen, onEdit, dimmed, hideSeriesTag, onDark }) {
   const captionColor = onDark ? "rgba(246,236,214,0.75)" : COLORS.inkSoft;
   return (
     <div style={{ position: "relative", display: "flex", flexDirection: "column", alignItems: "center" }}>
+      {!hideSeriesTag && (
+        <div
+          title={`${(p.wordCount || 0).toLocaleString()} words`}
+          style={{
+            position: "absolute", top: -8, left: -6, zIndex: 2,
+            padding: "2px 7px", borderRadius: 999, background: "rgba(18,13,8,0.78)",
+            fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, color: "#F3EAD9", whiteSpace: "nowrap",
+          }}
+        >
+          {(p.wordCount || 0).toLocaleString()}w
+        </div>
+      )}
       <button onClick={onEdit} title="Edit" style={{ position: "absolute", top: -8, right: -8, width: 22, height: 22, borderRadius: "50%", background: COLORS.paperRaised, border: `1px solid ${COLORS.paperLine}`, color: COLORS.inkSoft, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2 }}>
         <Settings size={11} />
       </button>
       <button className="spine-face" onClick={() => onOpen(p.id)} title={p.name} style={{ writingMode: "vertical-rl", textOrientation: "mixed", background: p.color, color: COLORS.ink, border: "none", borderRadius: "3px 3px 2px 2px", width: 34, height: 130, cursor: "pointer", fontFamily: "'Fraunces', serif", fontSize: 13, fontWeight: 600, letterSpacing: "0.03em", padding: "10px 0", boxShadow: dimmed ? "none" : "0 3px 10px rgba(0,0,0,0.45)" }}>
         {p.name}
       </button>
-      {!hideSeriesTag && (
-        <>
-          {p.series && (
-            <div title={p.series} style={{ display: "flex", alignItems: "center", gap: 3, marginTop: 6, maxWidth: 70, fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, color: captionColor, textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              <Layers size={9} style={{ flexShrink: 0 }} /> {p.series}
-            </div>
-          )}
-          <div style={{ marginTop: p.series ? 2 : 6, fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, color: captionColor, whiteSpace: "nowrap" }}>
-            {(p.wordCount || 0).toLocaleString()} words
-          </div>
-        </>
+      {!hideSeriesTag && p.series && (
+        <div title={p.series} style={{ display: "flex", alignItems: "center", gap: 3, marginTop: 6, maxWidth: 70, fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, color: captionColor, textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <Layers size={9} style={{ flexShrink: 0 }} /> {p.series}
+        </div>
       )}
     </div>
   );
@@ -2301,29 +2306,33 @@ function Spine({ p, onOpen, onEdit, dimmed, hideSeriesTag, onDark }) {
 // word count to keep the cluster from getting visually noisy.
 function SeriesCluster({ series, projects, onOpen, onEdit, onDark }) {
   const totalWords = projects.reduce((sum, p) => sum + (p.wordCount || 0), 0);
-  const captionColor = onDark ? "rgba(246,236,214,0.75)" : COLORS.inkSoft;
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+    <div
+      style={{
+        position: "relative",
+        display: "flex",
+        alignItems: "flex-end",
+        gap: 12,
+        padding: "22px 16px 8px 16px",
+        border: "2px dashed rgba(246,222,156,0.4)",
+        borderRadius: 6,
+        background: "rgba(246,222,156,0.07)",
+      }}
+    >
+      <WashiLabel text={series} />
       <div
+        title="Total across this series"
         style={{
-          position: "relative",
-          display: "flex",
-          alignItems: "flex-end",
-          gap: 12,
-          padding: "22px 16px 8px 16px",
-          border: "2px dashed rgba(246,222,156,0.4)",
-          borderRadius: 6,
-          background: "rgba(246,222,156,0.07)",
+          position: "absolute", top: -11, right: 10, zIndex: 2,
+          padding: "2px 8px", borderRadius: 999, background: "rgba(18,13,8,0.78)",
+          fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, color: "#F3EAD9", whiteSpace: "nowrap",
         }}
       >
-        <WashiLabel text={series} />
-        {projects.map((p) => (
-          <Spine key={p.id} p={p} onOpen={onOpen} onEdit={() => onEdit(p.id)} hideSeriesTag />
-        ))}
+        {projects.length} {projects.length === 1 ? "book" : "books"} · {totalWords.toLocaleString()}w
       </div>
-      <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, color: captionColor, whiteSpace: "nowrap" }}>
-        {projects.length} {projects.length === 1 ? "book" : "books"} · {totalWords.toLocaleString()} words
-      </div>
+      {projects.map((p) => (
+        <Spine key={p.id} p={p} onOpen={onOpen} onEdit={() => onEdit(p.id)} hideSeriesTag />
+      ))}
     </div>
   );
 }
