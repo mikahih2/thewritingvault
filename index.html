@@ -509,6 +509,9 @@ const localISO = (d) => {
 };
 const todayISO = () => localISO(new Date());
 const countWords = (t) => (t && t.trim() ? t.trim().split(/\s+/).length : 0);
+// Escapes regex-special characters in user-typed find text, so a search for
+// "Jo (the baker)" is treated as a literal string rather than a broken regex.
+const escapeRegExp = (s) => (s || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const totalWordsForProject = (p) => (p.scenes || []).reduce((sum, s) => sum + countWords(s.content), 0);
 
 function computeStreak(log) {
@@ -602,9 +605,16 @@ const normalizeProject = (data) => {
     return { ...c, relationships: normalized, groups: c.groups || [] };
   });
   const wiki = (data.wiki || []).map((w) => ({ category: "Uncategorized", ...w }));
-  const scenes = (data.scenes || []).map((s) => ({ chapter: "", ...s }));
+  const scenes = (data.scenes || []).map((s) => ({ chapter: "", status: "Draft", ...s }));
   return { history: [], characterMapPositions: {}, moodboard: [], brainstorm: [], wordsPerPage: 275, wordGoal: 0, trash: [], ...data, characters, wiki, scenes };
 };
+
+const SCENE_STATUSES = ["Draft", "Needs Revision", "Final"];
+function sceneStatusColor(status) {
+  if (status === "Final") return COLORS.sage;
+  if (status === "Needs Revision") return COLORS.wine;
+  return COLORS.gold; // Draft
+}
 
 const TABS = [
   { id: "brainstorm", label: "Brainstorm", icon: Lightbulb },
@@ -1320,7 +1330,7 @@ export default function StoryAtelier() {
 
   const addEvent = () => {
     const id = uid();
-    updateProject((p) => ({ ...p, timeline: [...p.timeline, { id, title: "", date: "", description: "", povCharId: "", linkedCharIds: [] }] }));
+    updateProject((p) => ({ ...p, timeline: [...p.timeline, { id, title: "", date: "", description: "", povCharId: "", linkedCharIds: [], linkedSceneIds: [] }] }));
     setEditorId(id);
   };
 
@@ -1332,7 +1342,7 @@ export default function StoryAtelier() {
     const newId = uid();
     updateProject((p) => {
       const timeline = [...p.timeline];
-      timeline.splice(index, 0, { id: newId, title: "", date: presetDate, description: "", povCharId: "", linkedCharIds: [] });
+      timeline.splice(index, 0, { id: newId, title: "", date: presetDate, description: "", povCharId: "", linkedCharIds: [], linkedSceneIds: [] });
       return { ...p, timeline };
     });
     setEditorId(newId);
@@ -1361,8 +1371,45 @@ export default function StoryAtelier() {
 
   const addScene = (chapter) => {
     const id = uid();
-    updateProject((p) => ({ ...p, scenes: [...p.scenes, { id, title: `Scene ${p.scenes.length + 1}`, content: "", chapter: chapter || "" }] }), true);
+    updateProject((p) => ({ ...p, scenes: [...p.scenes, { id, title: `Scene ${p.scenes.length + 1}`, content: "", chapter: chapter || "", status: "Draft" }] }), true);
     setEditorId(id);
+  };
+
+  // Counts occurrences of `find` across every scene's title, chapter, and
+  // content in the CURRENT project state — used for the live "N matches"
+  // preview in the Find & Replace modal before anything is actually changed.
+  const countManuscriptMatches = (find, matchCase) => {
+    if (!find || !project) return 0;
+    const re = new RegExp(escapeRegExp(find), matchCase ? "g" : "gi");
+    let count = 0;
+    (project.scenes || []).forEach((s) => {
+      ["title", "chapter", "content"].forEach((f) => {
+        const matches = (s[f] || "").match(re);
+        if (matches) count += matches.length;
+      });
+    });
+    return count;
+  };
+
+  // Replaces every occurrence of `find` with `replace` across every scene's
+  // title, chapter, and content in one pass — one debounced save instead of
+  // one per scene.
+  const bulkReplaceInManuscript = (find, replace, matchCase) => {
+    if (!find) return;
+    const re = new RegExp(escapeRegExp(find), matchCase ? "g" : "gi");
+    updateProject((p) => {
+      const scenes = p.scenes.map((s) => {
+        const fields = ["title", "chapter", "content"];
+        const patch = {};
+        fields.forEach((f) => {
+          const text = s[f] || "";
+          const replaced = text.replace(re, replace);
+          if (replaced !== text) patch[f] = replaced;
+        });
+        return Object.keys(patch).length ? { ...s, ...patch } : s;
+      });
+      return { ...p, scenes };
+    }, true);
   };
 
   const moveItem = (collection, id, direction) =>
@@ -1661,6 +1708,8 @@ ${parts.join("\n")}
           onUpdateSettings={updateProjectSettings}
           sessionWords={sessionWords}
           onRestoreItem={restoreFromTrash}
+          onCountMatches={countManuscriptMatches}
+          onBulkReplace={bulkReplaceInManuscript}
         />
       )}
     </div>
@@ -2688,7 +2737,7 @@ function TrashModal({ project, onRestore, onClose }) {
 
 function WorkspaceView({
   project, onBack, tab, setTab, editorId, setEditorId, saveState, onRename,
-  addCharacter, addRelationship, removeRelationship, updateMapPositions, addEvent, insertEvent, addWiki, addBrainstormEntry, addMoodboardItem, addScene, moveItem, removeItem, patchItem, exportBible, exportManuscript, onUpdateSettings, sessionWords, onRestoreItem,
+  addCharacter, addRelationship, removeRelationship, updateMapPositions, addEvent, insertEvent, addWiki, addBrainstormEntry, addMoodboardItem, addScene, moveItem, removeItem, patchItem, exportBible, exportManuscript, onUpdateSettings, sessionWords, onRestoreItem, onCountMatches, onBulkReplace,
 }) {
   const [showSearch, setShowSearch] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
@@ -2780,6 +2829,8 @@ function WorkspaceView({
             onMove={(id, dir) => moveItem("scenes", id, dir)}
             onUpdateSettings={onUpdateSettings}
             sessionWords={sessionWords}
+            onCountMatches={onCountMatches}
+            onBulkReplace={onBulkReplace}
           />
         )}
         {tab === "analytics" && <AnalyticsPane project={project} onUpdateSettings={onUpdateSettings} />}
@@ -3475,17 +3526,18 @@ function TimelineSection({ project, addEvent, insertEvent, moveItem, editorId, s
               >
                 {g.items.map((it, i) => {
                   const isCurrent = editorId === it.id;
+                  const written = (it.linkedSceneIds || []).length > 0;
                   const topPct = g.items.length === 1 ? 50 : (i / (g.items.length - 1)) * 74 + 13;
                   return (
                     <div
                       key={it.id}
                       onClick={(ev) => { ev.stopPropagation(); selectEvent(it.id); }}
-                      title={it.title || "Untitled event"}
+                      title={`${it.title || "Untitled event"}${written ? "" : " — not written yet"}`}
                       style={{
                         position: "absolute", left: "50%", top: `${topPct}%`, transform: "translate(-50%,-50%)",
                         width: isCurrent ? 13 : 8, height: isCurrent ? 13 : 8, borderRadius: "50%",
-                        background: COLORS.paperRaised,
-                        border: `2px solid ${isCurrent ? COLORS.ink : "rgba(0,0,0,0.32)"}`,
+                        background: written ? COLORS.sage : COLORS.paperRaised,
+                        border: `2px solid ${isCurrent ? COLORS.ink : written ? COLORS.sage : "rgba(0,0,0,0.32)"}`,
                         cursor: "pointer", transition: "width 0.1s, height 0.1s",
                       }}
                     />
@@ -3551,6 +3603,13 @@ function TimelineSection({ project, addEvent, insertEvent, moveItem, editorId, s
                               <Eye size={9} /> {project.characters.find((c) => c.id === item.povCharId)?.name || "—"}
                             </div>
                           )}
+                          {(item.linkedSceneIds || []).length === 0 ? (
+                            <div style={{ fontSize: 10.5, color: COLORS.inkSoft, marginTop: 2, fontStyle: "italic" }}>Not written yet</div>
+                          ) : (
+                            <div style={{ fontSize: 10.5, color: COLORS.sage, marginTop: 2, display: "flex", alignItems: "center", gap: 3 }}>
+                              <PenLine size={9} /> {item.linkedSceneIds.length} {item.linkedSceneIds.length === 1 ? "scene" : "scenes"}
+                            </div>
+                          )}
                         </div>
                         <div style={{ display: "flex", flexDirection: "column", flexShrink: 0 }}>
                           <button
@@ -3586,6 +3645,7 @@ function TimelineSection({ project, addEvent, insertEvent, moveItem, editorId, s
             key={selected.id}
             e={selected}
             allChars={project.characters}
+            allScenes={project.scenes || []}
             onPatch={(patch) => patchItem("timeline", selected.id, patch)}
             onDelete={() => { removeItem("timeline", selected.id); setEditorId(null); }}
           />
@@ -3597,7 +3657,7 @@ function TimelineSection({ project, addEvent, insertEvent, moveItem, editorId, s
   );
 }
 
-function EventEditor({ e, allChars, onPatch, onDelete }) {
+function EventEditor({ e, allChars, allScenes, onPatch, onDelete }) {
   return (
     <div style={{ maxWidth: 560 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start" }}>
@@ -3615,6 +3675,70 @@ function EventEditor({ e, allChars, onPatch, onDelete }) {
       <Field label={<span style={{ display: "flex", alignItems: "center", gap: 4 }}><Link2 size={12} /> Characters involved</span>}>
         <InvolvedEditor e={e} allChars={allChars} onPatch={onPatch} />
       </Field>
+      <Field label={<span style={{ display: "flex", alignItems: "center", gap: 4 }}><PenLine size={12} /> Scenes that depict this</span>}>
+        <LinkedScenesEditor e={e} allScenes={allScenes} onPatch={onPatch} />
+      </Field>
+    </div>
+  );
+}
+
+// Links a timeline event to the scene(s) that actually depict it — the
+// reverse of InvolvedEditor's character links. An event with nothing linked
+// here is treated elsewhere as "not written yet" (see the hollow dots on the
+// arc map and the unwritten count in TimelineSection).
+function LinkedScenesEditor({ e, allScenes, onPatch }) {
+  const [search, setSearch] = useState("");
+  const linkedIds = e.linkedSceneIds || [];
+  const linkedScenes = allScenes.filter((s) => linkedIds.includes(s.id));
+  const candidates = allScenes.filter((s) => !linkedIds.includes(s.id) && (s.title || "").toLowerCase().includes(search.toLowerCase()));
+
+  const add = (id) => {
+    onPatch({ linkedSceneIds: [...linkedIds, id] });
+    setSearch("");
+  };
+  const remove = (id) => onPatch({ linkedSceneIds: linkedIds.filter((x) => x !== id) });
+
+  if (allScenes.length === 0) {
+    return <p style={{ fontSize: 13, color: COLORS.inkSoft }}>Add scenes in the Manuscript tab first to link them here.</p>;
+  }
+
+  return (
+    <div>
+      {linkedScenes.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+          {linkedScenes.map((s) => (
+            <span key={s.id} style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, padding: "4px 6px 4px 10px", borderRadius: 999, background: COLORS.sage, color: COLORS.paper }}>
+              {s.title || "Untitled scene"}
+              <button onClick={() => remove(s.id)} style={{ background: "none", border: "none", color: COLORS.paper, cursor: "pointer", display: "flex", padding: 0 }}><X size={12} /></button>
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div style={{ position: "relative" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, ...getInputStyle(), padding: "6px 10px" }}>
+          <Search size={13} color={COLORS.inkSoft} />
+          <input
+            value={search}
+            onChange={(ev) => setSearch(ev.target.value)}
+            placeholder="Search scenes to link…"
+            style={{ border: "none", outline: "none", background: "transparent", fontFamily: "'Source Serif 4', serif", fontSize: 14, flex: 1 }}
+          />
+        </div>
+        {search && (
+          <div style={{ border: `1px solid ${COLORS.paperLine}`, borderRadius: 4, marginTop: 4, maxHeight: 160, overflowY: "auto", background: COLORS.paperRaised }}>
+            {candidates.length === 0 ? (
+              <p style={{ fontSize: 12, color: COLORS.inkSoft, padding: "8px 10px", margin: 0 }}>No matches.</p>
+            ) : (
+              candidates.map((s) => (
+                <div key={s.id} onClick={() => add(s.id)} style={{ padding: "8px 10px", cursor: "pointer", fontSize: 13, borderBottom: `1px solid ${COLORS.paperLine}` }}>
+                  {s.title || "Untitled scene"}
+                </div>
+              ))
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -4021,10 +4145,154 @@ function MoodboardCard({ item, onRemove, onMove, isFirst, isLast }) {
   );
 }
 
-function ManuscriptPane({ project, editorId, setEditorId, onAdd, onPatch, onDelete, onMove, onUpdateSettings, sessionWords }) {
+// Bulk find & replace across every scene's title, chapter, and content.
+// onCountMatches is called on every keystroke for the live preview;
+// onReplace only runs when the button is pressed. Nothing here mutates
+// state directly — both are supplied by the parent (StoryAtelier).
+function FindReplaceModal({ onCountMatches, onReplace, onClose }) {
+  const [find, setFind] = useState("");
+  const [replace, setReplace] = useState("");
+  const [matchCase, setMatchCase] = useState(true);
+  const [justReplaced, setJustReplaced] = useState(null);
+
+  const count = onCountMatches(find, matchCase);
+
+  const doReplace = () => {
+    if (!find || count === 0) return;
+    onReplace(find, replace, matchCase);
+    setJustReplaced(count);
+    setFind("");
+    setReplace("");
+  };
+
+  const canReplace = find && count > 0;
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(43,42,40,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: 20 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: COLORS.paperRaised, borderRadius: 8, padding: 24, width: 380, maxWidth: "100%", border: `1px solid ${COLORS.paperLine}` }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+          <span style={{ fontFamily: "'Fraunces', serif", fontSize: 18, fontWeight: 600 }}>Find &amp; Replace</span>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: COLORS.inkSoft, cursor: "pointer" }}><X size={16} /></button>
+        </div>
+        <p style={{ fontSize: 11.5, color: COLORS.inkSoft, marginTop: 0, marginBottom: 16 }}>
+          Searches every scene's title, chapter, and text across the whole manuscript.
+        </p>
+        <Field label="Find">
+          <input autoFocus value={find} onChange={(e) => { setFind(e.target.value); setJustReplaced(null); }} style={getInputStyle()} placeholder="e.g. Jonathan" />
+        </Field>
+        <Field label="Replace with">
+          <input value={replace} onChange={(e) => { setReplace(e.target.value); setJustReplaced(null); }} style={getInputStyle()} placeholder="e.g. Jon" />
+        </Field>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: COLORS.inkSoft, marginBottom: 16, cursor: "pointer" }}>
+          <input type="checkbox" checked={matchCase} onChange={(e) => setMatchCase(e.target.checked)} />
+          Match case
+        </label>
+        {find && (
+          <p style={{ fontSize: 12, color: count > 0 ? COLORS.sage : COLORS.inkSoft, marginTop: 0, marginBottom: 14 }}>
+            {count} {count === 1 ? "match" : "matches"} found{count > 0 ? " across the manuscript." : "."}
+          </p>
+        )}
+        {justReplaced !== null && (
+          <p style={{ fontSize: 12, color: COLORS.sage, marginTop: 0, marginBottom: 14 }}>
+            Replaced {justReplaced} {justReplaced === 1 ? "occurrence" : "occurrences"}.
+          </p>
+        )}
+        <button
+          onClick={doReplace}
+          disabled={!canReplace}
+          style={{
+            ...getExportBtnStyle(), width: "100%", justifyContent: "center",
+            background: canReplace ? COLORS.wine : "transparent",
+            color: canReplace ? COLORS.ink : COLORS.inkSoft,
+            border: canReplace ? "none" : `1px solid ${COLORS.paperLine}`,
+            cursor: canReplace ? "pointer" : "default",
+          }}
+        >
+          Replace all{count > 0 ? ` (${count})` : ""}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// A quick-reference "cast" panel for the Manuscript tab — search characters
+// and expand one to see their role, traits, groups, and backstory without
+// leaving the tab to check the Characters section.
+function CharacterQuickRefModal({ characters, onClose }) {
+  const [query, setQuery] = useState("");
+  const [expandedId, setExpandedId] = useState(null);
+  const q = query.trim().toLowerCase();
+  const filtered = q ? characters.filter((c) => (c.name || "").toLowerCase().includes(q)) : characters;
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(43,42,40,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: 20 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: COLORS.paperRaised, borderRadius: 8, padding: 20, width: 380, maxWidth: "100%", maxHeight: "74vh", display: "flex", flexDirection: "column", border: `1px solid ${COLORS.paperLine}` }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+          <span style={{ fontFamily: "'Fraunces', serif", fontSize: 18, fontWeight: 600 }}>Cast</span>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: COLORS.inkSoft, cursor: "pointer" }}><X size={16} /></button>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, ...getInputStyle(), padding: "7px 10px", marginBottom: 12, flexShrink: 0 }}>
+          <Search size={13} color={COLORS.inkSoft} />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search characters…"
+            style={{ border: "none", outline: "none", background: "transparent", flex: 1, fontFamily: "'Source Serif 4', serif", fontSize: 14 }}
+          />
+        </div>
+        <div className="atelier-scroll" style={{ overflowY: "auto", flex: 1 }}>
+          {characters.length === 0 && <p style={{ fontSize: 13, color: COLORS.inkSoft, fontStyle: "italic" }}>No characters yet.</p>}
+          {characters.length > 0 && filtered.length === 0 && <p style={{ fontSize: 13, color: COLORS.inkSoft, fontStyle: "italic" }}>No matches.</p>}
+          {filtered.map((c) => {
+            const open = expandedId === c.id;
+            return (
+              <div key={c.id} style={{ border: `1px solid ${COLORS.paperLine}`, borderRadius: 6, marginBottom: 8, overflow: "hidden" }}>
+                <button
+                  onClick={() => setExpandedId(open ? null : c.id)}
+                  style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", padding: "10px 12px", background: "transparent", border: "none", cursor: "pointer", textAlign: "left" }}
+                >
+                  <span style={{ minWidth: 0, overflow: "hidden" }}>
+                    <span style={{ fontFamily: "'Fraunces', serif", fontSize: 15, fontWeight: 600, color: COLORS.ink }}>{c.name || "Untitled character"}</span>
+                    {c.role && <span style={{ fontSize: 12, color: COLORS.inkSoft, marginLeft: 8 }}>{c.role}</span>}
+                  </span>
+                  {open ? <ChevronUp size={14} color={COLORS.inkSoft} /> : <ChevronDown size={14} color={COLORS.inkSoft} />}
+                </button>
+                {open && (
+                  <div style={{ padding: "0 12px 12px" }}>
+                    {c.traits && (
+                      <div style={{ fontSize: 12, color: COLORS.inkSoft, marginBottom: 8 }}>
+                        <strong style={{ color: COLORS.ink }}>Traits: </strong>{c.traits}
+                      </div>
+                    )}
+                    {(c.groups || []).length > 0 && (
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 8 }}>
+                        {c.groups.map((g) => (
+                          <span key={g} style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, padding: "1px 6px", borderRadius: 999, background: COLORS.gold, color: COLORS.paper }}>{g}</span>
+                        ))}
+                      </div>
+                    )}
+                    {c.backstory ? (
+                      <div style={{ fontSize: 12.5, color: COLORS.ink, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{c.backstory}</div>
+                    ) : (
+                      !c.traits && <p style={{ fontSize: 12, color: COLORS.inkSoft, fontStyle: "italic", margin: 0 }}>Nothing filled in yet.</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ManuscriptPane({ project, editorId, setEditorId, onAdd, onPatch, onDelete, onMove, onUpdateSettings, sessionWords, onCountMatches, onBulkReplace }) {
   const [collapsed, setCollapsed] = useState({});
   const [readingMode, setReadingMode] = useState(false);
   const [showGoals, setShowGoals] = useState(false);
+  const [showFindReplace, setShowFindReplace] = useState(false);
+  const [showCastRef, setShowCastRef] = useState(false);
   const scenes = project.scenes;
   const scene = scenes.find((s) => s.id === editorId);
   const hasChapters = scenes.some((s) => (s.chapter || "").trim());
@@ -4076,6 +4344,7 @@ function ManuscriptPane({ project, editorId, setEditorId, onAdd, onPatch, onDele
 
   const SceneRow = ({ s, i }) => (
     <div key={s.id} onClick={() => setEditorId(s.id)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 8px 8px 12px", borderRadius: 5, cursor: "pointer", marginBottom: 6, background: editorId === s.id ? COLORS.paper : "transparent", border: `1px solid ${editorId === s.id ? COLORS.paperLine : "transparent"}` }}>
+      <span title={s.status || "Draft"} style={{ width: 8, height: 8, borderRadius: "50%", background: sceneStatusColor(s.status), flexShrink: 0 }} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontFamily: "'Fraunces', serif", fontSize: 15, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.title}</div>
         <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: COLORS.inkSoft }}>{countWords(s.content)} words</div>
@@ -4123,6 +4392,12 @@ function ManuscriptPane({ project, editorId, setEditorId, onAdd, onPatch, onDele
         <div style={{ flex: 1, minWidth: 160 }}>
           <GoalProgressBar current={totalWords} goal={project.wordGoal} />
         </div>
+        <button onClick={() => setShowCastRef(true)} style={getExportBtnStyle()}>
+          <Users size={12} /> Cast
+        </button>
+        <button onClick={() => setShowFindReplace(true)} style={getExportBtnStyle()}>
+          <Search size={12} /> Find &amp; Replace
+        </button>
         <button onClick={() => setShowGoals(true)} style={getExportBtnStyle()}>
           <Settings size={12} /> Goals
         </button>
@@ -4133,6 +4408,14 @@ function ManuscriptPane({ project, editorId, setEditorId, onAdd, onPatch, onDele
           wordGoal={project.wordGoal}
           onSave={onUpdateSettings}
           onClose={() => setShowGoals(false)}
+        />
+      )}
+      {showCastRef && <CharacterQuickRefModal characters={project.characters || []} onClose={() => setShowCastRef(false)} />}
+      {showFindReplace && (
+        <FindReplaceModal
+          onCountMatches={onCountMatches}
+          onReplace={onBulkReplace}
+          onClose={() => setShowFindReplace(false)}
         />
       )}
       <div className="atelier-tabpane-row" style={{ flex: 1, minHeight: 0, display: "flex", overflow: "hidden" }}>
@@ -4198,6 +4481,23 @@ function ManuscriptPane({ project, editorId, setEditorId, onAdd, onPatch, onDele
               <input value={scene.title} onChange={(e) => onPatch(scene.id, { title: e.target.value })} style={{ ...getInputStyle(), fontFamily: "'Fraunces', serif", fontSize: 22, fontWeight: 600, border: "none", background: "transparent", padding: 0 }} />
               <button onClick={() => onDelete(scene.id)} style={{ background: "none", border: "none", color: COLORS.inkSoft, cursor: "pointer" }}><X size={16} /></button>
             </div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8, marginBottom: 14 }}>
+              {SCENE_STATUSES.map((s) => (
+                <button
+                  key={s}
+                  onClick={() => onPatch(scene.id, { status: s })}
+                  style={{
+                    fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, padding: "4px 10px", borderRadius: 999,
+                    border: `1px solid ${(scene.status || "Draft") === s ? sceneStatusColor(s) : COLORS.paperLine}`,
+                    background: (scene.status || "Draft") === s ? sceneStatusColor(s) : "transparent",
+                    color: (scene.status || "Draft") === s ? COLORS.paper : COLORS.inkSoft,
+                    cursor: "pointer",
+                  }}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
             <div style={{ marginTop: 10, marginBottom: 14, maxWidth: 300 }}>
               <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: COLORS.inkSoft, marginBottom: 6, display: "flex", alignItems: "center", gap: 4 }}>
                 <Folder size={11} /> Chapter (optional)
@@ -4210,6 +4510,24 @@ function ManuscriptPane({ project, editorId, setEditorId, onAdd, onPatch, onDele
                 onChange={(chapter) => onPatch(scene.id, { chapter })}
               />
             </div>
+            {(() => {
+              const linkedEvents = (project.timeline || []).filter((e) => (e.linkedSceneIds || []).includes(scene.id));
+              if (linkedEvents.length === 0) return null;
+              return (
+                <div style={{ marginBottom: 14 }}>
+                  <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: COLORS.inkSoft, marginBottom: 6, display: "flex", alignItems: "center", gap: 4 }}>
+                    <Clock size={11} /> Depicts these timeline events
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {linkedEvents.map((e) => (
+                      <span key={e.id} style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, padding: "3px 9px", borderRadius: 999, background: COLORS.paper, border: `1px solid ${COLORS.paperLine}`, color: COLORS.ink }}>
+                        {e.title || "Untitled event"}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
             <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: COLORS.inkSoft, marginBottom: 10 }}>{countWords(scene.content)} words</div>
             <textarea className="atelier-textarea" value={scene.content} onChange={(e) => onPatch(scene.id, { content: e.target.value })} placeholder="Write here. This is the shape does not matter part — half a scene, three lines, a full chapter, all fine." style={{ ...getInputStyle(), minHeight: 420, resize: "vertical", fontSize: 16, lineHeight: 1.7 }} />
           </div>
