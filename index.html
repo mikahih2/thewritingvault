@@ -1899,36 +1899,75 @@ function ShelfView({
         <p style={{ color: COLORS.inkSoft, fontStyle: "italic", marginBottom: 20 }}>Nothing on the shelf yet — add your first world below.</p>
       )}
 
-      {active.length > 0 && (
+      {(active.length > 0 || trashed.length > 0) && (
         <div style={{ marginBottom: 40 }}>
-          <div style={cabinetStyle}>
-            <div style={corniceStyle} />
-            {STATUSES.map((status) => {
-              const inStatus = active.filter((p) => p.status === status);
-              if (inStatus.length === 0) return null;
-              const clusters = groupBySeries(inStatus);
-              return (
-                <div key={status} style={{ marginBottom: 18 }}>
-                  <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: CABINET.starSoft, margin: "0 2px 8px" }}>{status}</div>
-                  <div style={shelfSkyStyle()}>
-                    <div style={shelfGlowStyle} />
-                    {clusters.map((cluster) =>
-                      cluster.series ? (
-                        <SeriesCluster key={cluster.series} series={cluster.series} projects={cluster.projects} onOpen={onOpen} onEdit={setMetaEditId} onDark />
-                      ) : (
-                        <Spine key={cluster.projects[0].id} p={cluster.projects[0]} onOpen={onOpen} onEdit={() => setMetaEditId(cluster.projects[0].id)} onDark />
-                      )
-                    )}
+          {active.length > 0 && (
+            <div style={cabinetStyle}>
+              <div style={corniceStyle} />
+              {STATUSES.map((status) => {
+                const inStatus = active.filter((p) => p.status === status);
+                if (inStatus.length === 0) return null;
+                const clusters = groupBySeries(inStatus);
+                return (
+                  <div key={status} style={{ marginBottom: 18 }}>
+                    <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: CABINET.starSoft, margin: "0 2px 8px" }}>{status}</div>
+                    <div style={shelfSkyStyle()}>
+                      <div style={shelfGlowStyle} />
+                      {clusters.map((cluster) =>
+                        cluster.series ? (
+                          <SeriesCluster key={cluster.series} series={cluster.series} projects={cluster.projects} onOpen={onOpen} onEdit={setMetaEditId} onDark />
+                        ) : (
+                          <Spine key={cluster.projects[0].id} p={cluster.projects[0]} onOpen={onOpen} onEdit={() => setMetaEditId(cluster.projects[0].id)} onDark />
+                        )
+                      )}
+                    </div>
+                    <div className="shelf-board-grain" style={shelfBoardStyle} />
                   </div>
-                  <div className="shelf-board-grain" style={shelfBoardStyle} />
+                );
+              })}
+              <div style={cabinetPlinthStyle} />
+            </div>
+          )}
+
+          {trashed.length > 0 && (
+            <div
+              style={{
+                position: "relative",
+                background: `linear-gradient(180deg, ${CABINET.woodDeep}, ${CABINET.woodShadow})`,
+                borderRadius: active.length > 0 ? "0 0 10px 10px" : "10px",
+                marginTop: active.length > 0 ? -6 : 0,
+                padding: "0 16px 4px",
+                boxShadow: "0 14px 26px rgba(0,0,0,0.4), inset 0 3px 6px rgba(0,0,0,0.4)",
+              }}
+            >
+              <button
+                onClick={() => setShowTrash(!showTrash)}
+                style={{
+                  display: "flex", alignItems: "center", gap: 6, width: "100%", justifyContent: "center",
+                  background: "none", border: "none", color: CABINET.starSoft, cursor: "pointer",
+                  fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase",
+                  padding: "10px 0",
+                }}
+              >
+                <Trash2 size={12} /> Trash ({trashed.length}) {showTrash ? "▲" : "▼"}
+              </button>
+              {showTrash && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, paddingBottom: 14 }}>
+                  {trashed.map((p) => {
+                    const daysLeft = Math.max(0, Math.ceil(TRASH_RETENTION_DAYS - daysSince(p.trashedAt)));
+                    return (
+                      <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderRadius: 6, background: "rgba(0,0,0,0.25)", border: "1px solid rgba(246,222,156,0.15)" }}>
+                        <span style={{ width: 10, height: 10, borderRadius: "50%", background: p.color, flexShrink: 0 }} />
+                        <span style={{ flex: 1, minWidth: 0, fontFamily: "'Fraunces', serif", fontSize: 14, fontWeight: 600, color: "#FBF3E7", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
+                        <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: "rgba(246,236,214,0.65)", flexShrink: 0 }}>{daysLeft} {daysLeft === 1 ? "day" : "days"} left</span>
+                        <button onClick={() => onRestoreProject(p.id)} style={{ ...getExportBtnStyle(), flexShrink: 0, borderColor: "rgba(246,222,156,0.4)", color: CABINET.starSoft }}>Restore</button>
+                      </div>
+                    );
+                  })}
                 </div>
-              );
-            })}
-            <div style={cabinetPlinthStyle} />
-          </div>
-          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: -8, marginRight: 8, opacity: 0.92 }}>
-            <ShelfPlant size={42} />
-          </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -1963,29 +2002,6 @@ function ShelfView({
                   <Spine key={cluster.projects[0].id} p={cluster.projects[0]} onOpen={onOpen} onEdit={() => setMetaEditId(cluster.projects[0].id)} dimmed />
                 )
               )}
-            </div>
-          )}
-        </div>
-      )}
-
-      {trashed.length > 0 && (
-        <div style={{ marginTop: 24 }}>
-          <button onClick={() => setShowTrash(!showTrash)} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: COLORS.inkSoft, cursor: "pointer", fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 }}>
-            <Trash2 size={13} /> Trash ({trashed.length}) {showTrash ? "▲" : "▼"}
-          </button>
-          {showTrash && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 14, maxWidth: 420 }}>
-              {trashed.map((p) => {
-                const daysLeft = Math.max(0, Math.ceil(TRASH_RETENTION_DAYS - daysSince(p.trashedAt)));
-                return (
-                  <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderRadius: 6, border: `1px solid ${COLORS.paperLine}`, background: COLORS.paperRaised }}>
-                    <span style={{ width: 10, height: 10, borderRadius: "50%", background: p.color, flexShrink: 0 }} />
-                    <span style={{ flex: 1, minWidth: 0, fontFamily: "'Fraunces', serif", fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
-                    <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: COLORS.inkSoft, flexShrink: 0 }}>{daysLeft} {daysLeft === 1 ? "day" : "days"} left</span>
-                    <button onClick={() => onRestoreProject(p.id)} style={{ ...getExportBtnStyle(), flexShrink: 0 }}>Restore</button>
-                  </div>
-                );
-              })}
             </div>
           )}
         </div>
@@ -4003,29 +4019,40 @@ function ManuscriptPane({ project, editorId, setEditorId, onAdd, onPatch, onDele
   );
 }
 
-/* ---------------- ANALYTICS (per project) ---------------- */
-
-// A GitHub-style contribution grid: one column per week, one cell per day,
-// shaded by how many words were written that day (computeDailyDeltas turns
-// the existing cumulative `history` into daily totals — no new data is
-// stored for this). Spans the last 14 weeks, padded so the grid lines up on
-// Sundays like a normal calendar week.
-function DailyHeatmap({ history }) {
+// A real month calendar — day-of-week columns, date numbers, one month at a
+// time — shaded by how many words were written that day (computeDailyDeltas
+// turns the existing cumulative `history` into daily totals; no new data is
+// stored for this). Replaces an earlier GitHub-style contribution grid that
+// had no date labels and was genuinely unclear about which days it covered.
+function CalendarHeatmap({ history }) {
   const deltaMap = useMemo(() => computeDailyDeltas(history), [history]);
+  // Scale is fixed to the darkest day across the whole project, not just the
+  // visible month, so color intensity stays comparable as you flip months.
+  const maxVal = useMemo(() => Math.max(1, ...Object.values(deltaMap)), [deltaMap]);
+  const [viewMonth, setViewMonth] = useState(() => {
+    const d = new Date();
+    d.setDate(1);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  });
 
-  const WEEKS = 14;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const days = [];
-  for (let i = WEEKS * 7 - 1; i >= 0; i--) {
-    days.push(new Date(today.getTime() - i * 86400000));
-  }
-  const leadingPad = days[0].getDay(); // 0 = Sunday
-  const cells = [...Array(leadingPad).fill(null), ...days];
+  const year = viewMonth.getFullYear();
+  const month = viewMonth.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const leadingPad = new Date(year, month, 1).getDay(); // 0 = Sunday
+  const cells = [];
+  for (let i = 0; i < leadingPad; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(new Date(year, month, d));
+  while (cells.length % 7 !== 0) cells.push(null);
   const weeks = [];
   for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
 
-  const maxVal = Math.max(1, ...Object.values(deltaMap));
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayIso = localISO(today);
+  const isCurrentMonth = year === today.getFullYear() && month === today.getMonth();
+  const monthLabel = viewMonth.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+
   const colorFor = (val) => {
     if (!val) return "transparent";
     const ratio = val / maxVal;
@@ -4035,21 +4062,51 @@ function DailyHeatmap({ history }) {
     return COLORS.sageSoft;
   };
 
+  const goPrev = () => setViewMonth(new Date(year, month - 1, 1));
+  const goNext = () => setViewMonth(new Date(year, month + 1, 1));
+  const goToday = () => { const d = new Date(); d.setDate(1); d.setHours(0, 0, 0, 0); setViewMonth(d); };
+
   return (
-    <div style={{ overflowX: "auto", paddingBottom: 4 }}>
-      <div style={{ display: "flex", gap: 3, width: "fit-content" }}>
+    <div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+        <button onClick={goPrev} style={zoomBtnStyle} title="Previous month"><ChevronLeft size={13} /></button>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontFamily: "'Fraunces', serif", fontSize: 14, fontWeight: 600, color: COLORS.ink }}>{monthLabel}</span>
+          {!isCurrentMonth && (
+            <button onClick={goToday} style={{ ...getExportBtnStyle(), fontSize: 10, padding: "3px 8px" }}>Today</button>
+          )}
+        </div>
+        <button onClick={goNext} style={zoomBtnStyle} title="Next month"><ChevronRight size={13} /></button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 4 }}>
+        {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
+          <div key={d} style={{ textAlign: "center", fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, color: COLORS.inkSoft }}>{d}</div>
+        ))}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         {weeks.map((week, wi) => (
-          <div key={wi} style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+          <div key={wi} style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
             {week.map((d, di) => {
-              if (!d) return <div key={di} style={{ width: 11, height: 11 }} />;
+              if (!d) return <div key={di} />;
               const iso = localISO(d);
               const val = deltaMap[iso] || 0;
+              const isToday = iso === todayIso;
               return (
                 <div
                   key={di}
                   title={`${iso} — ${val.toLocaleString()} words`}
-                  style={{ width: 11, height: 11, borderRadius: 2, background: colorFor(val), border: `1px solid ${COLORS.paperLine}` }}
-                />
+                  style={{
+                    aspectRatio: "1",
+                    borderRadius: 4,
+                    background: colorFor(val),
+                    border: isToday ? `1.5px solid ${COLORS.wine}` : `1px solid ${COLORS.paperLine}`,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontFamily: "'IBM Plex Mono', monospace", fontSize: 10,
+                    color: val ? "#FBF3E7" : COLORS.inkSoft,
+                  }}
+                >
+                  {d.getDate()}
+                </div>
               );
             })}
           </div>
@@ -4117,7 +4174,7 @@ function AnalyticsPane({ project, onUpdateSettings }) {
         {(project.history || []).length === 0 ? (
           <p style={{ fontSize: 13, color: COLORS.inkSoft, fontStyle: "italic" }}>Write a little today and this will start to fill in.</p>
         ) : (
-          <DailyHeatmap history={project.history} />
+          <CalendarHeatmap history={project.history} />
         )}
       </div>
 
