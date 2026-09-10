@@ -302,7 +302,16 @@ function nodeSizeForName(name) {
   const label = raw.length > maxChars ? raw.slice(0, maxChars - 1) + "…" : raw;
   return { radius, label };
 }
-const STATUSES = ["Brainstorming", "Drafting", "In Progress"];
+const STATUSES = ["Brainstorming", "World Building", "Drafting", "Editing", "On Hold", "Finished"];
+// Maps a saved status onto the current STATUSES list, for projects created
+// before this list changed. "In Progress" (the old middle status) maps to
+// "Drafting" as the closest equivalent; anything else unrecognized falls
+// back to "Brainstorming" rather than silently vanishing from the shelf.
+function migrateStatus(status) {
+  if (STATUSES.includes(status)) return status;
+  if (status === "In Progress") return "Drafting";
+  return "Brainstorming";
+}
 const GROUP_COLORS = ["#D9A94A", "#6C86B8", "#3E8079", "#C97A72", "#8B5A82", "#5C8A5F"];
 
 // Assigns each group in a project its own color, in a stable order (sorted
@@ -981,7 +990,10 @@ export default function StoryAtelier() {
           await storage.set("projects-index", JSON.stringify(idx));
         }
       }
-      const normalizedIdx = idx.map((p) => ({ status: "Brainstorming", archived: false, wordCount: 0, series: "", trashedAt: null, ...p }));
+      const normalizedIdx = idx.map((p) => {
+        const base = { status: "Brainstorming", archived: false, wordCount: 0, series: "", trashedAt: null, ...p };
+        return { ...base, status: migrateStatus(base.status) };
+      });
       // Projects trashed longer than TRASH_RETENTION_DAYS are purged for
       // good here: their stored data is deleted and they drop out of the
       // index entirely, rather than sticking around forever as dead weight.
@@ -1291,6 +1303,10 @@ export default function StoryAtelier() {
     await persistProject(id, data);
     setNewName("");
     setCreating(false);
+    // Prompt status/series/color right away instead of leaving a freshly
+    // shelved project defaulted to "Brainstorming" until someone remembers
+    // to go edit it later.
+    setMetaEditId(id);
   };
 
   const openProject = (id) => {
