@@ -948,6 +948,7 @@ export default function StoryAtelier() {
   const [activityLog, setActivityLog] = useState({});
   const [theme, setThemeState] = useState("dark");
   const [showSettings, setShowSettings] = useState(false);
+  const [showHomeMenu, setShowHomeMenu] = useState(false);
   const [showQuickCapture, setShowQuickCapture] = useState(false);
   const [seenIntros, setSeenIntros] = useState({});
   const [activeIntro, setActiveIntro] = useState(null);
@@ -1553,6 +1554,23 @@ ${parts.join("\n")}
           onClose={() => setShowSettings(false)}
         />
       )}
+      {showHomeMenu && (
+        <HomeMenuModal
+          projects={projects || []}
+          activityLog={activityLog}
+          globalTotalWords={globalTotalWords}
+          streak={streak}
+          theme={theme}
+          onChangeTheme={changeTheme}
+          onResetTutorial={resetTutorial}
+          user={user}
+          authBusy={authBusy}
+          authError={authError}
+          onSignIn={handleSignIn}
+          onSignOut={handleSignOut}
+          onClose={() => setShowHomeMenu(false)}
+        />
+      )}
       {view === "workspace" && project && (
         <button
           onClick={() => setShowQuickCapture(true)}
@@ -1606,6 +1624,7 @@ ${parts.join("\n")}
           setConfirmDeleteId={setConfirmDeleteId}
           onDelete={handleDelete}
           onRestoreProject={handleRestoreProject}
+          onOpenMenu={() => setShowHomeMenu(true)}
           showArchived={showArchived}
           setShowArchived={setShowArchived}
           globalTotalWords={globalTotalWords}
@@ -1867,10 +1886,172 @@ function FontImport() {
 
 /* ---------------- SHELF (landing page) ---------------- */
 
+// A small boolean version of the per-project calendar: one dot of color per
+// day *anything* was written across every project, fed straight from the
+// activity-log that already drives the streak count — no new data needed.
+function GlobalActivityCalendar({ activityLog }) {
+  const [viewMonth, setViewMonth] = useState(() => {
+    const d = new Date();
+    d.setDate(1);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  });
+  const year = viewMonth.getFullYear();
+  const month = viewMonth.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const leadingPad = new Date(year, month, 1).getDay();
+  const cells = [];
+  for (let i = 0; i < leadingPad; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(new Date(year, month, d));
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayIso = localISO(today);
+  const isCurrentMonth = year === today.getFullYear() && month === today.getMonth();
+  const monthLabel = viewMonth.toLocaleDateString(undefined, { month: "short", year: "numeric" });
+  const goPrev = () => setViewMonth(new Date(year, month - 1, 1));
+  const goNext = () => setViewMonth(new Date(year, month + 1, 1));
+  const navBtnStyle = { width: 16, height: 16, borderRadius: 3, border: "none", background: "transparent", color: COLORS.inkSoft, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" };
+
+  return (
+    <div style={{ width: 168 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+        <button onClick={goPrev} style={navBtnStyle} title="Previous month"><ChevronLeft size={11} /></button>
+        <span
+          onClick={!isCurrentMonth ? () => setViewMonth(new Date(today.getFullYear(), today.getMonth(), 1)) : undefined}
+          title={!isCurrentMonth ? "Jump to today" : undefined}
+          style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: "0.03em", color: COLORS.inkSoft, cursor: !isCurrentMonth ? "pointer" : "default" }}
+        >
+          {monthLabel}
+        </span>
+        <button onClick={goNext} style={navBtnStyle} title="Next month"><ChevronRight size={11} /></button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2 }}>
+        {cells.map((d, i) => {
+          if (!d) return <div key={i} style={{ width: 20, height: 20 }} />;
+          const iso = localISO(d);
+          const wrote = !!activityLog[iso];
+          const isToday = iso === todayIso;
+          return (
+            <div
+              key={i}
+              title={`${iso}${wrote ? " — wrote" : ""}`}
+              style={{
+                width: 20, height: 20, borderRadius: 3,
+                background: wrote ? COLORS.wine : "transparent",
+                border: isToday ? `1.5px solid ${COLORS.wine}` : `1px solid ${COLORS.paperLine}`,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontFamily: "'IBM Plex Mono', monospace", fontSize: 8,
+                color: wrote ? "#FBF3E7" : COLORS.inkSoft,
+              }}
+            >
+              {d.getDate()}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// The Analytics tab of the home menu: totals across every world, a small
+// calendar of which days anything got written, and a sorted word-count
+// breakdown per world — built entirely from data already sitting in
+// `projects` and `activityLog`, no per-project files need loading.
+function GlobalAnalyticsContent({ projects, activityLog, globalTotalWords, streak }) {
+  const live = projects.filter((p) => !p.trashedAt);
+  const sorted = [...live].sort((a, b) => (b.wordCount || 0) - (a.wordCount || 0));
+  const maxWords = Math.max(1, ...sorted.map((p) => p.wordCount || 0));
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 12, marginBottom: 20, flexWrap: "wrap" }}>
+        <StatCard label="Total words" value={globalTotalWords.toLocaleString()} />
+        <StatCard label="Day streak" value={streak} accent={streak > 0} />
+        <StatCard label="Worlds" value={live.length} />
+      </div>
+
+      <div style={{ marginBottom: 24 }}>
+        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", color: COLORS.gold, marginBottom: 8 }}>Writing activity</div>
+        <GlobalActivityCalendar activityLog={activityLog} />
+      </div>
+
+      <div>
+        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", color: COLORS.sage, marginBottom: 10 }}>Words per world</div>
+        {sorted.length === 0 ? (
+          <p style={{ fontSize: 13, color: COLORS.inkSoft, fontStyle: "italic" }}>Nothing on the shelf yet.</p>
+        ) : (
+          sorted.map((p) => (
+            <div key={p.id} style={{ marginBottom: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3, gap: 8 }}>
+                <span style={{ fontSize: 13, color: COLORS.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
+                <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: COLORS.inkSoft, flexShrink: 0 }}>{(p.wordCount || 0).toLocaleString()}</span>
+              </div>
+              <div style={{ height: 6, borderRadius: 999, background: COLORS.paper, overflow: "hidden" }}>
+                <div style={{ height: "100%", width: `${Math.round(((p.wordCount || 0) / maxWords) * 100)}%`, background: p.color, borderRadius: 999 }} />
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+// The menu opened from the books icon in the shelf's top-left corner —
+// Analytics (global, across every world) and Settings (the same content the
+// gear icon shows) as tabs in one place, so neither needs its own separate
+// entry point on the homepage.
+function HomeMenuModal({
+  projects, activityLog, globalTotalWords, streak,
+  theme, onChangeTheme, onResetTutorial, user, authBusy, authError, onSignIn, onSignOut,
+  onClose,
+}) {
+  const [tab, setTab] = useState("analytics");
+  const tabBtnStyle = (active) => ({
+    ...getExportBtnStyle(),
+    background: active ? COLORS.paper : "transparent",
+    color: active ? COLORS.wine : COLORS.inkSoft,
+    borderColor: active ? COLORS.wine : COLORS.paperLine,
+  });
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(43,42,40,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: 20 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: COLORS.paperRaised, borderRadius: 8, padding: 24, width: 420, maxWidth: "100%", maxHeight: "84vh", display: "flex", flexDirection: "column", border: `1px solid ${COLORS.paperLine}` }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <span style={{ fontFamily: "'Fraunces', serif", fontSize: 18, fontWeight: 600, color: COLORS.ink }}>The Shelf</span>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: COLORS.inkSoft, cursor: "pointer" }}><X size={16} /></button>
+        </div>
+        <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
+          <button onClick={() => setTab("analytics")} style={tabBtnStyle(tab === "analytics")}><BarChart3 size={12} /> Analytics</button>
+          <button onClick={() => setTab("settings")} style={tabBtnStyle(tab === "settings")}><Settings size={12} /> Settings</button>
+        </div>
+        <div className="atelier-scroll" style={{ overflowY: "auto", flex: 1 }}>
+          {tab === "analytics" ? (
+            <GlobalAnalyticsContent projects={projects} activityLog={activityLog} globalTotalWords={globalTotalWords} streak={streak} />
+          ) : (
+            <SettingsPanelContent
+              theme={theme}
+              onChangeTheme={onChangeTheme}
+              onResetTutorial={onResetTutorial}
+              user={user}
+              authBusy={authBusy}
+              authError={authError}
+              onSignIn={onSignIn}
+              onSignOut={onSignOut}
+            />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ShelfView({
   projects, onOpen, creating, setCreating, newName, setNewName, newColor, setNewColor, onCreate,
   metaEditId, setMetaEditId, onUpdateMeta, confirmDeleteId, setConfirmDeleteId, onDelete,
-  showArchived, setShowArchived, globalTotalWords, streak, onRestoreProject,
+  showArchived, setShowArchived, globalTotalWords, streak, onRestoreProject, onOpenMenu,
 }) {
   const [showTrash, setShowTrash] = useState(false);
   const active = projects.filter((p) => !p.archived && !p.trashedAt);
@@ -1881,10 +2062,14 @@ function ShelfView({
 
   return (
     <div className="atelier-scroll" style={{ padding: "36px 40px", flex: 1, minHeight: 0, overflowY: "auto", backgroundImage: "radial-gradient(ellipse at top, rgba(232,193,112,0.09), transparent 62%)" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+      <button
+        onClick={onOpenMenu}
+        title="Analytics & settings"
+        style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6, background: "none", border: "none", padding: 0, cursor: "pointer" }}
+      >
         <Library size={20} color={COLORS.wine} />
         <h1 style={{ fontFamily: "'Fraunces', serif", fontSize: 28, fontWeight: 700, margin: 0 }}>The Shelf</h1>
-      </div>
+      </button>
       <p style={{ color: COLORS.inkSoft, fontSize: 14, marginTop: 0, marginBottom: 8 }}>
         Every world you're building, in one place. Click a spine to open it.
       </p>
@@ -2162,7 +2347,7 @@ function QuickCaptureModal({ onSave, onClose }) {
   );
 }
 
-function SettingsModal({ theme, onChangeTheme, onResetTutorial, user, authBusy, authError, onSignIn, onSignOut, onClose }) {
+function SettingsPanelContent({ theme, onChangeTheme, onResetTutorial, user, authBusy, authError, onSignIn, onSignOut }) {
   const OptionCard = ({ value, label, sub, swatchBg, swatchInk }) => {
     const active = theme === value;
     return (
@@ -2189,83 +2374,99 @@ function SettingsModal({ theme, onChangeTheme, onResetTutorial, user, authBusy, 
   };
 
   return (
+    <div>
+      <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: COLORS.inkSoft, marginBottom: 8 }}>
+        Account
+      </div>
+      {user ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 6, border: `1px solid ${COLORS.paperLine}`, marginBottom: 8 }}>
+          {user.photo ? (
+            <img src={user.photo} alt="" style={{ width: 32, height: 32, borderRadius: "50%", flexShrink: 0 }} />
+          ) : (
+            <div style={{ width: 32, height: 32, borderRadius: "50%", background: COLORS.wine, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", color: COLORS.ink, fontFamily: "'Fraunces', serif", fontWeight: 700 }}>
+              {(user.name || user.email || "?").charAt(0).toUpperCase()}
+            </div>
+          )}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13.5, color: COLORS.ink, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{user.name || "Signed in"}</div>
+            <div style={{ fontSize: 11.5, color: COLORS.inkSoft, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{user.email}</div>
+          </div>
+          <button onClick={onSignOut} style={{ ...getExportBtnStyle(), flexShrink: 0 }}>Sign out</button>
+        </div>
+      ) : (
+        <button
+          onClick={onSignIn}
+          disabled={authBusy}
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%",
+            fontFamily: "'IBM Plex Mono', monospace", fontSize: 12.5, padding: "10px 12px", borderRadius: 6,
+            border: `1px solid ${COLORS.paperLine}`, background: "transparent", color: COLORS.ink,
+            cursor: authBusy ? "default" : "pointer", opacity: authBusy ? 0.6 : 1, marginBottom: 8,
+          }}
+        >
+          {authBusy ? <Loader2 size={14} className="animate-spin" /> : <svg width="14" height="14" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.9-2.26 5.36-4.78 7.02l7.73 6c4.51-4.18 7.09-10.36 7.09-17.49z"/><path fill="#FBBC05" d="M10.53 28.59A14.5 14.5 0 0 1 9.5 24c0-1.59.27-3.13.76-4.59l-7.98-6.19A23.94 23.94 0 0 0 0 24c0 3.86.92 7.51 2.56 10.78z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>}
+          {authBusy ? "Signing in…" : "Sign in with Google"}
+        </button>
+      )}
+      {authError && !user && (
+        <p style={{ fontSize: 12, color: COLORS.wine, marginTop: 0, marginBottom: 8, lineHeight: 1.4 }}>{authError}</p>
+      )}
+      <p style={{ fontSize: 12, color: COLORS.inkSoft, marginTop: 0, marginBottom: 18 }}>
+        {user
+          ? "Your stories sync to this account — sign in the same way on another device to pick up right where you left off."
+          : "Sign in to sync your stories to your Google account, so they show up on your other devices too."}
+      </p>
+
+      <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: COLORS.inkSoft, marginBottom: 8 }}>
+        Appearance
+      </div>
+      <OptionCard value="dark" label="Dark" sub="Wood & starlight, low light" swatchBg="#1E140C" swatchInk="#F3EAD9" />
+      <OptionCard value="light" label="Light" sub="Warm daylight parchment" swatchBg="#FBF2E4" swatchInk="#2E2013" />
+      <p style={{ fontSize: 12, color: COLORS.inkSoft, marginTop: 4, marginBottom: 18 }}>
+        Your choice is saved on this device and applies across every project.
+      </p>
+
+      <div style={{ borderTop: `1px solid ${COLORS.paperLine}`, paddingTop: 16 }}>
+        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: COLORS.inkSoft, marginBottom: 8 }}>
+          Help
+        </div>
+        <button
+          onClick={onResetTutorial}
+          style={{
+            display: "flex", alignItems: "center", gap: 8, width: "100%",
+            fontFamily: "'IBM Plex Mono', monospace", fontSize: 12.5,
+            padding: "10px 12px", borderRadius: 6, cursor: "pointer",
+            border: `1px solid ${COLORS.paperLine}`, background: "transparent", color: COLORS.ink,
+          }}
+        >
+          <Lightbulb size={14} color={COLORS.gold} /> Reset tutorial
+        </button>
+        <p style={{ fontSize: 12, color: COLORS.inkSoft, marginTop: 8, marginBottom: 0 }}>
+          Brings back the bookworm's walkthrough on every page, as if you were visiting for the first time.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function SettingsModal({ theme, onChangeTheme, onResetTutorial, user, authBusy, authError, onSignIn, onSignOut, onClose }) {
+  return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(43,42,40,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: COLORS.paperRaised, borderRadius: 8, padding: 24, width: 340, maxWidth: "90vw", border: `1px solid ${COLORS.paperLine}` }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: COLORS.paperRaised, borderRadius: 8, padding: 24, width: 340, maxWidth: "90vw", maxHeight: "85vh", overflowY: "auto", border: `1px solid ${COLORS.paperLine}` }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
           <span style={{ fontFamily: "'Fraunces', serif", fontSize: 18, fontWeight: 600, color: COLORS.ink }}>Settings</span>
           <button onClick={onClose} style={{ background: "none", border: "none", color: COLORS.inkSoft, cursor: "pointer" }}><X size={16} /></button>
         </div>
-
-        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: COLORS.inkSoft, marginBottom: 8 }}>
-          Account
-        </div>
-        {user ? (
-          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 6, border: `1px solid ${COLORS.paperLine}`, marginBottom: 8 }}>
-            {user.photo ? (
-              <img src={user.photo} alt="" style={{ width: 32, height: 32, borderRadius: "50%", flexShrink: 0 }} />
-            ) : (
-              <div style={{ width: 32, height: 32, borderRadius: "50%", background: COLORS.wine, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", color: COLORS.ink, fontFamily: "'Fraunces', serif", fontWeight: 700 }}>
-                {(user.name || user.email || "?").charAt(0).toUpperCase()}
-              </div>
-            )}
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13.5, color: COLORS.ink, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{user.name || "Signed in"}</div>
-              <div style={{ fontSize: 11.5, color: COLORS.inkSoft, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{user.email}</div>
-            </div>
-            <button onClick={onSignOut} style={{ ...getExportBtnStyle(), flexShrink: 0 }}>Sign out</button>
-          </div>
-        ) : (
-          <button
-            onClick={onSignIn}
-            disabled={authBusy}
-            style={{
-              display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%",
-              fontFamily: "'IBM Plex Mono', monospace", fontSize: 12.5, padding: "10px 12px", borderRadius: 6,
-              border: `1px solid ${COLORS.paperLine}`, background: "transparent", color: COLORS.ink,
-              cursor: authBusy ? "default" : "pointer", opacity: authBusy ? 0.6 : 1, marginBottom: 8,
-            }}
-          >
-            {authBusy ? <Loader2 size={14} className="animate-spin" /> : <svg width="14" height="14" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.9-2.26 5.36-4.78 7.02l7.73 6c4.51-4.18 7.09-10.36 7.09-17.49z"/><path fill="#FBBC05" d="M10.53 28.59A14.5 14.5 0 0 1 9.5 24c0-1.59.27-3.13.76-4.59l-7.98-6.19A23.94 23.94 0 0 0 0 24c0 3.86.92 7.51 2.56 10.78z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>}
-            {authBusy ? "Signing in…" : "Sign in with Google"}
-          </button>
-        )}
-        {authError && !user && (
-          <p style={{ fontSize: 12, color: COLORS.wine, marginTop: 0, marginBottom: 8, lineHeight: 1.4 }}>{authError}</p>
-        )}
-        <p style={{ fontSize: 12, color: COLORS.inkSoft, marginTop: 0, marginBottom: 18 }}>
-          {user
-            ? "Your stories sync to this account — sign in the same way on another device to pick up right where you left off."
-            : "Sign in to sync your stories to your Google account, so they show up on your other devices too."}
-        </p>
-
-        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: COLORS.inkSoft, marginBottom: 8 }}>
-          Appearance
-        </div>
-        <OptionCard value="dark" label="Dark" sub="Ink & paper, low light" swatchBg="#1B1916" swatchInk="#EDE6D4" />
-        <OptionCard value="light" label="Light" sub="Daylight parchment" swatchBg="#F7F1E6" swatchInk="#2B2620" />
-        <p style={{ fontSize: 12, color: COLORS.inkSoft, marginTop: 4, marginBottom: 18 }}>
-          Your choice is saved on this device and applies across every project.
-        </p>
-
-        <div style={{ borderTop: `1px solid ${COLORS.paperLine}`, paddingTop: 16 }}>
-          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: COLORS.inkSoft, marginBottom: 8 }}>
-            Help
-          </div>
-          <button
-            onClick={onResetTutorial}
-            style={{
-              display: "flex", alignItems: "center", gap: 8, width: "100%",
-              fontFamily: "'IBM Plex Mono', monospace", fontSize: 12.5,
-              padding: "10px 12px", borderRadius: 6, cursor: "pointer",
-              border: `1px solid ${COLORS.paperLine}`, background: "transparent", color: COLORS.ink,
-            }}
-          >
-            <Lightbulb size={14} color={COLORS.gold} /> Reset tutorial
-          </button>
-          <p style={{ fontSize: 12, color: COLORS.inkSoft, marginTop: 8, marginBottom: 0 }}>
-            Brings back the bookworm's walkthrough on every page, as if you were visiting for the first time.
-          </p>
-        </div>
+        <SettingsPanelContent
+          theme={theme}
+          onChangeTheme={onChangeTheme}
+          onResetTutorial={onResetTutorial}
+          user={user}
+          authBusy={authBusy}
+          authError={authError}
+          onSignIn={onSignIn}
+          onSignOut={onSignOut}
+        />
       </div>
     </div>
   );
@@ -4051,7 +4252,7 @@ function CalendarHeatmap({ history }) {
   today.setHours(0, 0, 0, 0);
   const todayIso = localISO(today);
   const isCurrentMonth = year === today.getFullYear() && month === today.getMonth();
-  const monthLabel = viewMonth.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  const monthLabel = viewMonth.toLocaleDateString(undefined, { month: "short", year: "numeric" });
 
   const colorFor = (val) => {
     if (!val) return "transparent";
@@ -4064,53 +4265,48 @@ function CalendarHeatmap({ history }) {
 
   const goPrev = () => setViewMonth(new Date(year, month - 1, 1));
   const goNext = () => setViewMonth(new Date(year, month + 1, 1));
-  const goToday = () => { const d = new Date(); d.setDate(1); d.setHours(0, 0, 0, 0); setViewMonth(d); };
+
+  const navBtnStyle = { width: 16, height: 16, borderRadius: 3, border: "none", background: "transparent", color: COLORS.inkSoft, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" };
 
   return (
-    <div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-        <button onClick={goPrev} style={zoomBtnStyle} title="Previous month"><ChevronLeft size={13} /></button>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontFamily: "'Fraunces', serif", fontSize: 14, fontWeight: 600, color: COLORS.ink }}>{monthLabel}</span>
-          {!isCurrentMonth && (
-            <button onClick={goToday} style={{ ...getExportBtnStyle(), fontSize: 10, padding: "3px 8px" }}>Today</button>
-          )}
-        </div>
-        <button onClick={goNext} style={zoomBtnStyle} title="Next month"><ChevronRight size={13} /></button>
+    <div style={{ width: 168 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+        <button onClick={goPrev} style={navBtnStyle} title="Previous month"><ChevronLeft size={11} /></button>
+        <span
+          onClick={!isCurrentMonth ? () => setViewMonth(new Date(today.getFullYear(), today.getMonth(), 1)) : undefined}
+          title={!isCurrentMonth ? "Jump to today" : undefined}
+          style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: "0.03em", color: COLORS.inkSoft, cursor: !isCurrentMonth ? "pointer" : "default" }}
+        >
+          {monthLabel}
+        </span>
+        <button onClick={goNext} style={navBtnStyle} title="Next month"><ChevronRight size={11} /></button>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 4 }}>
-        {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
-          <div key={d} style={{ textAlign: "center", fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, color: COLORS.inkSoft }}>{d}</div>
-        ))}
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        {weeks.map((week, wi) => (
-          <div key={wi} style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
-            {week.map((d, di) => {
-              if (!d) return <div key={di} />;
-              const iso = localISO(d);
-              const val = deltaMap[iso] || 0;
-              const isToday = iso === todayIso;
-              return (
-                <div
-                  key={di}
-                  title={`${iso} — ${val.toLocaleString()} words`}
-                  style={{
-                    aspectRatio: "1",
-                    borderRadius: 4,
-                    background: colorFor(val),
-                    border: isToday ? `1.5px solid ${COLORS.wine}` : `1px solid ${COLORS.paperLine}`,
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    fontFamily: "'IBM Plex Mono', monospace", fontSize: 10,
-                    color: val ? "#FBF3E7" : COLORS.inkSoft,
-                  }}
-                >
-                  {d.getDate()}
-                </div>
-              );
-            })}
-          </div>
-        ))}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2 }}>
+        {weeks.map((week, wi) =>
+          week.map((d, di) => {
+            if (!d) return <div key={`${wi}-${di}`} style={{ width: 20, height: 20 }} />;
+            const iso = localISO(d);
+            const val = deltaMap[iso] || 0;
+            const isToday = iso === todayIso;
+            return (
+              <div
+                key={`${wi}-${di}`}
+                title={`${iso} — ${val.toLocaleString()} words`}
+                style={{
+                  width: 20, height: 20,
+                  borderRadius: 3,
+                  background: colorFor(val),
+                  border: isToday ? `1.5px solid ${COLORS.wine}` : `1px solid ${COLORS.paperLine}`,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontFamily: "'IBM Plex Mono', monospace", fontSize: 8,
+                  color: val ? "#FBF3E7" : COLORS.inkSoft,
+                }}
+              >
+                {d.getDate()}
+              </div>
+            );
+          })
+        )}
       </div>
     </div>
   );
@@ -4140,12 +4336,21 @@ function AnalyticsPane({ project, onUpdateSettings }) {
 
   return (
     <div className="atelier-scroll" style={{ flex: 1, padding: 24, overflowY: "auto" }}>
-      <div style={{ display: "flex", gap: 12, marginBottom: 20, flexWrap: "wrap" }}>
-        <StatCard label="Total words" value={totalWords.toLocaleString()} />
-        <StatCard label="Pages" value={pages} />
-        <StatCard label="Scenes" value={sceneCount} />
-        <StatCard label="Avg words / scene" value={avgWords.toLocaleString()} />
-        <StatCard label="Written today" value={Math.max(wordsToday, 0).toLocaleString()} accent />
+      <div style={{ display: "flex", gap: 20, marginBottom: 20, flexWrap: "wrap", alignItems: "flex-start" }}>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", flex: 1 }}>
+          <StatCard label="Total words" value={totalWords.toLocaleString()} />
+          <StatCard label="Pages" value={pages} />
+          <StatCard label="Scenes" value={sceneCount} />
+          <StatCard label="Avg words / scene" value={avgWords.toLocaleString()} />
+          <StatCard label="Written today" value={Math.max(wordsToday, 0).toLocaleString()} accent />
+        </div>
+        <div style={{ padding: 10, borderRadius: 8, background: COLORS.paper, border: `1px solid ${COLORS.paperLine}`, flexShrink: 0 }}>
+          {(project.history || []).length === 0 ? (
+            <p style={{ fontSize: 11, color: COLORS.inkSoft, fontStyle: "italic", margin: 0, maxWidth: 150 }}>Write today to start tracking.</p>
+          ) : (
+            <CalendarHeatmap history={project.history} />
+          )}
+        </div>
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 28 }}>
@@ -4168,15 +4373,6 @@ function AnalyticsPane({ project, onUpdateSettings }) {
           onClose={() => setShowGoals(false)}
         />
       )}
-
-      <div style={{ marginBottom: 32 }}>
-        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", color: COLORS.gold, marginBottom: 10 }}>Daily activity</div>
-        {(project.history || []).length === 0 ? (
-          <p style={{ fontSize: 13, color: COLORS.inkSoft, fontStyle: "italic" }}>Write a little today and this will start to fill in.</p>
-        ) : (
-          <CalendarHeatmap history={project.history} />
-        )}
-      </div>
 
       <div style={{ marginBottom: 32 }}>
         <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", color: COLORS.wine, marginBottom: 10 }}>Words over time</div>
