@@ -1257,6 +1257,27 @@ export default function StoryAtelier() {
     }
   }, []);
 
+  // A debounced save (see updateProject below) waits ~700ms after your last
+  // keystroke before it actually writes. That's fine while the tab stays
+  // open, but phones routinely background or discard a tab the moment you
+  // switch apps, lock the screen, or the OS wants the memory back — and if
+  // that happens inside the 700ms window, the write never lands and the
+  // project reverts to whatever was last successfully saved. Flushing on
+  // "visibilitychange" (fires the instant the tab is hidden) and "pagehide"
+  // (fires on mobile Safari/Chrome even when visibilitychange is unreliable)
+  // closes that window: any pending edit is written out before backgrounding
+  // rather than left to a timer that may never get to run.
+  useEffect(() => {
+    const flush = () => runPendingSave();
+    const onVisibility = () => { if (document.visibilityState === "hidden") flush(); };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pagehide", flush);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pagehide", flush);
+    };
+  }, [runPendingSave]);
+
   // updater: (prev) => next ; touchesManuscript: whether this edit should count toward the writing streak
   const updateProject = (updater, touchesManuscript = false) => {
     setProject((prev) => {
@@ -1735,6 +1756,7 @@ ${parts.join("\n")}
           onRestoreItem={restoreFromTrash}
           onCountMatches={countManuscriptMatches}
           onBulkReplace={bulkReplaceInManuscript}
+          flushPendingSave={runPendingSave}
         />
       )}
     </div>
@@ -2770,7 +2792,7 @@ function TrashModal({ project, onRestore, onClose }) {
 
 function WorkspaceView({
   project, onBack, tab, setTab, editorId, setEditorId, saveState, onRename,
-  addCharacter, addRelationship, removeRelationship, updateMapPositions, addEvent, insertEvent, addWiki, addBrainstormEntry, addMoodboardItem, addScene, moveItem, removeItem, patchItem, exportBible, exportManuscript, onUpdateSettings, sessionWords, onRestoreItem, onCountMatches, onBulkReplace,
+  addCharacter, addRelationship, removeRelationship, updateMapPositions, addEvent, insertEvent, addWiki, addBrainstormEntry, addMoodboardItem, addScene, moveItem, removeItem, patchItem, exportBible, exportManuscript, onUpdateSettings, sessionWords, onRestoreItem, onCountMatches, onBulkReplace, flushPendingSave,
 }) {
   const [showSearch, setShowSearch] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
@@ -2780,6 +2802,7 @@ function WorkspaceView({
   }
 
   const jumpToResult = (type, id) => {
+    flushPendingSave();
     setTab(type);
     setEditorId(id);
     setShowSearch(false);
@@ -2813,7 +2836,7 @@ function WorkspaceView({
           const Icon = t.icon;
           const isActive = tab === t.id;
           return (
-            <button key={t.id} onClick={() => { setTab(t.id); setEditorId(null); }} className="atelier-tab-btn" style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, whiteSpace: "nowrap", fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, letterSpacing: "0.04em", padding: "8px 14px", borderRadius: "6px 6px 0 0", border: `1px solid ${isActive ? COLORS.paperLine : "transparent"}`, borderBottom: isActive ? `1px solid ${COLORS.paperRaised}` : "1px solid transparent", background: isActive ? COLORS.paperRaised : "transparent", color: isActive ? COLORS.wine : COLORS.inkSoft, cursor: "pointer", marginBottom: -1, textTransform: "uppercase" }}>
+            <button key={t.id} onClick={() => { flushPendingSave(); setTab(t.id); setEditorId(null); }} className="atelier-tab-btn" style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, whiteSpace: "nowrap", fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, letterSpacing: "0.04em", padding: "8px 14px", borderRadius: "6px 6px 0 0", border: `1px solid ${isActive ? COLORS.paperLine : "transparent"}`, borderBottom: isActive ? `1px solid ${COLORS.paperRaised}` : "1px solid transparent", background: isActive ? COLORS.paperRaised : "transparent", color: isActive ? COLORS.wine : COLORS.inkSoft, cursor: "pointer", marginBottom: -1, textTransform: "uppercase" }}>
               <Icon size={13} /> <span className="atelier-tab-label">{t.label}</span>
             </button>
           );
