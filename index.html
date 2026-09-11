@@ -239,6 +239,7 @@ async function recoverOrphanedProjects(uid, idx) {
 import {
   Users, Clock, BookOpen, PenLine, Plus, X, Download, Loader2, Library, Link2,
   Settings, ArrowLeft, Archive, ArchiveRestore, Trash2, Flame, BarChart3, Network, List, Eye, Search, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Images, ImageOff, Folder, Lightbulb, Layers, RefreshCw,
+  Bold, Italic, Heading2,
 } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar,
@@ -388,13 +389,13 @@ function buildSearchIndex(project) {
   (project.characters || []).forEach((c) => {
     const title = c.name || "Untitled character";
     const meta = c.role || "";
-    const content = `${c.backstory || ""} ${c.traits || ""}`.trim();
+    const content = `${stripHtml(c.backstory)} ${c.traits || ""}`.trim();
     items.push({ type: "characters", id: c.id, title, meta, content, searchable: `${title} ${meta} ${content}`.toLowerCase() });
   });
   (project.wiki || []).forEach((w) => {
     const title = w.title || "Untitled entry";
     const meta = w.category || "";
-    const content = w.body || "";
+    const content = stripHtml(w.body);
     items.push({ type: "wiki", id: w.id, title, meta, content, searchable: `${title} ${meta} ${content}`.toLowerCase() });
   });
   (project.timeline || []).forEach((e) => {
@@ -404,15 +405,16 @@ function buildSearchIndex(project) {
     items.push({ type: "timeline", id: e.id, title, meta, content, searchable: `${title} ${meta} ${content}`.toLowerCase() });
   });
   (project.brainstorm || []).forEach((b) => {
-    const title = b.title || (b.body ? b.body.slice(0, 40) : "Untitled");
+    const plainBody = stripHtml(b.body);
+    const title = b.title || (plainBody ? plainBody.slice(0, 40) : "Untitled");
     const meta = b.date || "";
-    const content = b.body || "";
+    const content = plainBody;
     items.push({ type: "brainstorm", id: b.id, title, meta, content, searchable: `${title} ${meta} ${content}`.toLowerCase() });
   });
   (project.scenes || []).forEach((s) => {
     const title = s.title || "Untitled scene";
     const meta = s.chapter || "";
-    const content = s.content || "";
+    const content = stripHtml(s.content);
     items.push({ type: "manuscript", id: s.id, title, meta, content, searchable: `${title} ${meta} ${content}`.toLowerCase() });
   });
   return items;
@@ -517,7 +519,50 @@ const localISO = (d) => {
   return `${y}-${m}-${day}`;
 };
 const todayISO = () => localISO(new Date());
-const countWords = (t) => (t && t.trim() ? t.trim().split(/\s+/).length : 0);
+
+// ---- Rich text helpers ----
+// Wiki/Brainstorm/Character-backstory/Manuscript-scene fields store their
+// content as an HTML string once RichTextField touches them (so headings,
+// bold, and italics survive), but plenty of existing entries were saved
+// back when those same fields were plain text. Everything below is built
+// to treat both as valid input rather than requiring a one-time migration.
+const escapeHtmlChars = (s) => (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+// A cheap heuristic — good enough to tell "already-saved HTML" apart from
+// "plain text that's never been through the rich editor" without a real parser.
+const looksLikeHtml = (s) => /<\/?[a-z][\s\S]*>/i.test(s || "");
+// Turns old plain-text content into paragraph HTML the first time it's
+// opened in a RichTextField, so line breaks aren't lost the moment rich
+// text is introduced. Blank lines become paragraph breaks; single line
+// breaks within a paragraph become <br>.
+const plainTextToHtml = (text) => {
+  const escaped = escapeHtmlChars(text || "");
+  const blocks = escaped.split(/\n{2,}/).filter((b) => b.trim());
+  if (blocks.length === 0) return "";
+  return blocks.map((b) => `<p>${b.replace(/\n/g, "<br/>")}</p>`).join("");
+};
+const ensureHtml = (value) => {
+  if (!value) return "";
+  return looksLikeHtml(value) ? value : plainTextToHtml(value);
+};
+// Strips tags back down to plain text — used anywhere content needs to be
+// counted, searched, or exported as plain text rather than displayed.
+const stripHtml = (html) => {
+  if (!html) return "";
+  return html
+    .replace(/<\/(p|h1|h2|h3|div|li)>/gi, "\n")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+};
+const countWords = (t) => {
+  const plain = stripHtml(t);
+  return plain && plain.trim() ? plain.trim().split(/\s+/).length : 0;
+};
 // Escapes regex-special characters in user-typed find text, so a search for
 // "Jo (the baker)" is treated as a literal string rather than a broken regex.
 const escapeRegExp = (s) => (s || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -946,6 +991,107 @@ function AutoGrowTextarea({ value, onChange, placeholder, minHeight = 100, style
         ...style,
       }}
     />
+  );
+}
+
+// A minimal rich-text field: a 3-button toolbar (Heading / Bold / Italic)
+// above a contentEditable area, saving HTML instead of plain text.
+//
+// Deliberately NOT a controlled component — `value` is only read once, on
+// mount, to seed the contentEditable's innerHTML. After that, edits flow
+// one-way (DOM -> onChange -> parent state) and the DOM is never overwritten
+// from a `value` prop update. Syncing innerHTML on every keystroke is the
+// classic way to make a contentEditable's cursor jump to the start of the
+// field on mobile Safari, since the browser doesn't know the new innerHTML
+// is "the same" content it already had focused.
+//
+// This means whoever renders a RichTextField for a specific item (a wiki
+// entry, a scene, a character) needs to pass a `key` that changes when the
+// item being edited changes, so React remounts a fresh instance instead of
+// reusing the old DOM node with stale content.
+function RichTextField({ value, onChange, placeholder, minHeight = 160 }) {
+  const ref = useRef(null);
+  const [active, setActive] = useState({ bold: false, italic: false, heading: false });
+
+  useEffect(() => {
+    if (ref.current) ref.current.innerHTML = ensureHtml(value);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const updateActive = () => {
+    try {
+      setActive({
+        bold: document.queryCommandState("bold"),
+        italic: document.queryCommandState("italic"),
+        heading: document.queryCommandValue("formatBlock").toLowerCase() === "h2",
+      });
+    } catch (e) { /* queryCommandState can throw if focus moved elsewhere mid-check */ }
+  };
+
+  const exec = (cmd) => {
+    if (!ref.current) return;
+    ref.current.focus();
+    if (cmd === "bold") document.execCommand("bold");
+    if (cmd === "italic") document.execCommand("italic");
+    if (cmd === "heading") {
+      const isHeading = document.queryCommandValue("formatBlock").toLowerCase() === "h2";
+      document.execCommand("formatBlock", false, isHeading ? "p" : "h2");
+    }
+    updateActive();
+    onChange(ref.current.innerHTML);
+  };
+
+  const ToolBtn = ({ cmd, isActive, children, title }) => (
+    <button
+      type="button"
+      title={title}
+      // Keeps the current text selection alive — a normal button click
+      // blurs the contentEditable first, which loses the selection before
+      // execCommand ever runs.
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={() => exec(cmd)}
+      style={{
+        border: "none",
+        background: isActive ? COLORS.gold : "transparent",
+        color: isActive ? COLORS.paper : COLORS.inkSoft,
+        width: 30, height: 26, borderRadius: 6, cursor: "pointer",
+        display: "flex", alignItems: "center", justifyContent: "center",
+      }}
+    >
+      {children}
+    </button>
+  );
+
+  return (
+    <div style={{ border: `1px solid ${COLORS.paperLine}`, borderRadius: 4, background: COLORS.paperRaised, overflow: "hidden" }}>
+      <div style={{ display: "flex", gap: 2, padding: 4, borderBottom: `1px solid ${COLORS.paperLine}` }}>
+        <ToolBtn cmd="heading" isActive={active.heading} title="Heading"><Heading2 size={14} /></ToolBtn>
+        <div style={{ width: 1, background: COLORS.paperLine, margin: "3px 2px" }} />
+        <ToolBtn cmd="bold" isActive={active.bold} title="Bold"><Bold size={14} /></ToolBtn>
+        <ToolBtn cmd="italic" isActive={active.italic} title="Italic"><Italic size={14} /></ToolBtn>
+      </div>
+      <div
+        ref={ref}
+        className="atelier-richtext"
+        contentEditable
+        suppressContentEditableWarning
+        data-placeholder={placeholder || ""}
+        onInput={() => onChange(ref.current.innerHTML)}
+        onKeyUp={updateActive}
+        onMouseUp={updateActive}
+        onTouchEnd={() => setTimeout(updateActive, 10)}
+        onFocus={updateActive}
+        style={{
+          minHeight,
+          padding: "8px 10px",
+          outline: "none",
+          fontFamily: "'Source Serif 4', serif",
+          fontSize: 15,
+          lineHeight: 1.6,
+          color: COLORS.ink,
+        }}
+      />
+    </div>
   );
 }
 
@@ -1575,7 +1721,11 @@ export default function StoryAtelier() {
         lastChapter = chapter;
       }
       parts.push(`<h2 style="font-family:Georgia,serif; font-size:14pt; margin-top:24pt;">${escapeHtml(s.title)}</h2>`);
-      parts.push(paragraphsHtml(s.content));
+      // Rich-text content is already valid HTML (p/h2/strong/em) written by
+      // RichTextField, so it can go straight into the Word export as-is.
+      // Older scenes saved before rich text was added are still plain text
+      // with \n line breaks, so those still need paragraphsHtml's escaping.
+      parts.push(looksLikeHtml(s.content) ? s.content : paragraphsHtml(s.content));
     });
     const html = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
 <head><meta charset="utf-8"><title>${escapeHtml(project.name)}</title></head>
@@ -1587,9 +1737,9 @@ ${parts.join("\n")}
 
   const exportBible = () => {
     if (!project) return;
-    const chars = project.characters.map((c) => `${c.name}${c.role ? " — " + c.role : ""}\nTraits: ${c.traits || "—"}\n${c.backstory || ""}`).join("\n\n");
+    const chars = project.characters.map((c) => `${c.name}${c.role ? " — " + c.role : ""}\nTraits: ${c.traits || "—"}\n${stripHtml(c.backstory)}`).join("\n\n");
     const timeline = project.timeline.map((e) => `${e.date ? "[" + e.date + "] " : ""}${e.title}\n${e.description || ""}`).join("\n\n");
-    const wiki = project.wiki.map((w) => `${w.title}\n${w.body || ""}`).join("\n\n");
+    const wiki = project.wiki.map((w) => `${w.title}\n${stripHtml(w.body)}`).join("\n\n");
     const text = `CHARACTERS\n==========\n\n${chars || "—"}\n\n\nTIMELINE\n========\n\n${timeline || "—"}\n\n\nWIKI\n====\n\n${wiki || "—"}`;
     download(`${project.name.replace(/\s+/g, "_")}_story_bible.txt`, text);
   };
@@ -1938,6 +2088,27 @@ function FontImport() {
     <style>{`
       @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Source+Serif+4:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap');
       .atelier-textarea::placeholder { color: #6B6459; }
+      .atelier-richtext:empty:before {
+        content: attr(data-placeholder);
+        color: ${COLORS.inkSoft};
+        font-style: italic;
+      }
+      .atelier-richtext h2 {
+        font-family: 'Fraunces', serif;
+        font-size: 19px;
+        font-weight: 700;
+        color: ${COLORS.wine};
+        margin: 0.7em 0 0.3em;
+        padding-bottom: 4px;
+        border-bottom: 1px solid ${COLORS.paperLine};
+      }
+      .atelier-richtext h2:first-child { margin-top: 0; }
+      .atelier-richtext p { margin: 0 0 0.8em; }
+      .atelier-richtext p:last-child { margin-bottom: 0; }
+      .atelier-richtext strong { color: ${COLORS.ink}; font-weight: 700; }
+      .atelier-richtext em { color: ${COLORS.sage}; font-style: italic; }
+      .atelier-richtext.compact h2 { font-size: 14px; margin: 0.5em 0 0.2em; padding-bottom: 2px; }
+      .atelier-richtext.compact p { margin: 0 0 0.5em; }
       .atelier-scroll::-webkit-scrollbar { width: 8px; }
       .atelier-scroll::-webkit-scrollbar-thumb { background: ${COLORS.paperLine}; border-radius: 4px; }
       .spine-face { transition: transform 0.15s ease; position: relative; }
@@ -3401,7 +3572,7 @@ function CharacterEditor({ c, allChars, allGroups = [], groupColorMap = {}, onPa
       <Field label="Role"><input value={c.role} onChange={(e) => onPatch({ role: e.target.value })} style={getInputStyle()} placeholder="e.g. protagonist, love interest" /></Field>
       <Field label="Traits"><input value={c.traits} onChange={(e) => onPatch({ traits: e.target.value })} style={getInputStyle()} placeholder="comma-separated" /></Field>
       <Field label="Backstory">
-        <AutoGrowTextarea value={c.backstory} onChange={(e) => onPatch({ backstory: e.target.value })} minHeight={140} placeholder="As short or long as you need." />
+        <RichTextField key={c.id} value={c.backstory} onChange={(html) => onPatch({ backstory: html })} minHeight={140} placeholder="As short or long as you need." />
       </Field>
       <Field label={<span style={{ display: "flex", alignItems: "center", gap: 4 }}><Users size={12} /> Groups</span>}>
         <GroupTagEditor groups={c.groups} allGroups={allGroups} groupColorMap={groupColorMap} onChange={(groups) => onPatch({ groups })} />
@@ -3945,7 +4116,7 @@ function WikiEditor({ w, onPatch, onDelete, categories = [] }) {
       <Field label={<span style={{ display: "flex", alignItems: "center", gap: 4 }}><Folder size={12} /> Category</span>}>
         <CategoryField value={w.category} categories={categories} onChange={(cat) => onPatch({ category: cat })} />
       </Field>
-      <Field label="Notes"><AutoGrowTextarea value={w.body} onChange={(e) => onPatch({ body: e.target.value })} minHeight={220} /></Field>
+      <Field label="Notes"><RichTextField key={w.id} value={w.body} onChange={(html) => onPatch({ body: html })} minHeight={220} /></Field>
     </div>
   );
 }
@@ -4048,7 +4219,7 @@ function BrainstormEditor({ entry, onPatch, onDelete }) {
         <input type="date" value={entry.date || ""} onChange={(e) => onPatch({ date: e.target.value })} style={{ ...getInputStyle(), width: 170, fontFamily: "'IBM Plex Mono', monospace", fontSize: 13 }} />
       </Field>
       <Field label="Notes">
-        <AutoGrowTextarea value={entry.body} onChange={(e) => onPatch({ body: e.target.value })} minHeight={320} placeholder="Talk it through — questions, half-ideas, dialogue snippets, anything. Nothing here has to be right yet." />
+        <RichTextField key={entry.id} value={entry.body} onChange={(html) => onPatch({ body: html })} minHeight={320} placeholder="Talk it through — questions, half-ideas, dialogue snippets, anything. Nothing here has to be right yet." />
       </Field>
     </div>
   );
@@ -4327,8 +4498,12 @@ function CharacterQuickRefModal({ characters, onClose }) {
                         ))}
                       </div>
                     )}
-                    {c.backstory ? (
-                      <div style={{ fontSize: 12.5, color: COLORS.ink, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{c.backstory}</div>
+                    {stripHtml(c.backstory) ? (
+                      <div
+                        className="atelier-richtext compact"
+                        style={{ fontSize: 12.5, color: COLORS.ink, lineHeight: 1.5 }}
+                        dangerouslySetInnerHTML={{ __html: ensureHtml(c.backstory) }}
+                      />
                     ) : (
                       !c.traits && <p style={{ fontSize: 12, color: COLORS.inkSoft, fontStyle: "italic", margin: 0 }}>Nothing filled in yet.</p>
                     )}
@@ -4387,9 +4562,15 @@ function ManuscriptPane({ project, editorId, setEditorId, onAdd, onPatch, onDele
                   <h2 style={{ fontFamily: "'Fraunces', serif", fontSize: 24, fontWeight: 700, color: COLORS.wine, marginTop: 8, marginBottom: 4 }}>{chapter}</h2>
                 )}
                 <h3 style={{ fontFamily: "'Fraunces', serif", fontSize: 17, fontWeight: 600, color: COLORS.ink, marginBottom: 14 }}>{s.title || "Untitled scene"}</h3>
-                <div style={{ fontFamily: "'Source Serif 4', serif", fontSize: 17, lineHeight: 1.85, color: COLORS.ink, whiteSpace: "pre-wrap" }}>
-                  {s.content || <span style={{ fontStyle: "italic", color: COLORS.inkSoft }}>(empty scene)</span>}
-                </div>
+                {stripHtml(s.content) ? (
+                  <div
+                    className="atelier-richtext"
+                    style={{ fontFamily: "'Source Serif 4', serif", fontSize: 17, lineHeight: 1.85, color: COLORS.ink }}
+                    dangerouslySetInnerHTML={{ __html: ensureHtml(s.content) }}
+                  />
+                ) : (
+                  <span style={{ fontStyle: "italic", color: COLORS.inkSoft }}>(empty scene)</span>
+                )}
               </div>
             );
           })}
@@ -4585,7 +4766,7 @@ function ManuscriptPane({ project, editorId, setEditorId, onAdd, onPatch, onDele
               );
             })()}
             <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: COLORS.inkSoft, marginBottom: 10 }}>{countWords(scene.content)} words</div>
-            <textarea className="atelier-textarea" value={scene.content} onChange={(e) => onPatch(scene.id, { content: e.target.value })} placeholder="Write here. This is the shape does not matter part — half a scene, three lines, a full chapter, all fine." style={{ ...getInputStyle(), minHeight: 420, resize: "vertical", fontSize: 16, lineHeight: 1.7 }} />
+            <RichTextField key={scene.id} value={scene.content} onChange={(html) => onPatch(scene.id, { content: html })} minHeight={420} placeholder="Write here. This is the shape does not matter part — half a scene, three lines, a full chapter, all fine." />
           </div>
         )}
       </div>
