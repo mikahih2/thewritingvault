@@ -3058,6 +3058,7 @@ function WorkspaceView({
             sessionWords={sessionWords}
             onCountMatches={onCountMatches}
             onBulkReplace={onBulkReplace}
+            onJumpToCharacter={(id) => jumpToResult("characters", id)}
           />
         )}
         {tab === "analytics" && <AnalyticsPane project={project} onUpdateSettings={onUpdateSettings} />}
@@ -4518,7 +4519,7 @@ function CharacterQuickRefModal({ characters, onClose }) {
   );
 }
 
-function ManuscriptPane({ project, editorId, setEditorId, onAdd, onPatch, onDelete, onMove, onUpdateSettings, sessionWords, onCountMatches, onBulkReplace }) {
+function ManuscriptPane({ project, editorId, setEditorId, onAdd, onPatch, onDelete, onMove, onUpdateSettings, sessionWords, onCountMatches, onBulkReplace, onJumpToCharacter }) {
   const [collapsed, setCollapsed] = useState({});
   const [readingMode, setReadingMode] = useState(false);
   const [showGoals, setShowGoals] = useState(false);
@@ -4579,12 +4580,25 @@ function ManuscriptPane({ project, editorId, setEditorId, onAdd, onPatch, onDele
     );
   }
 
-  const SceneRow = ({ s, i }) => (
+  const SceneRow = ({ s, i }) => {
+    const povChar = s.povCharId ? (project.characters || []).find((c) => c.id === s.povCharId) : null;
+    return (
     <div key={s.id} onClick={() => setEditorId(s.id)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 8px 8px 12px", borderRadius: 5, cursor: "pointer", marginBottom: 6, background: editorId === s.id ? COLORS.paper : "transparent", border: `1px solid ${editorId === s.id ? COLORS.paperLine : "transparent"}` }}>
       <span title={s.status || "Draft"} style={{ width: 8, height: 8, borderRadius: "50%", background: sceneStatusColor(s.status), flexShrink: 0 }} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontFamily: "'Fraunces', serif", fontSize: 15, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.title}</div>
-        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: COLORS.inkSoft }}>{countWords(s.content)} words</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: COLORS.inkSoft }}>{countWords(s.content)} words</div>
+          {povChar && (
+            <span
+              onClick={(e) => { e.stopPropagation(); onJumpToCharacter && onJumpToCharacter(povChar.id); }}
+              title={`POV: ${povChar.name} — view profile`}
+              style={{ display: "inline-flex", alignItems: "center", gap: 3, fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: COLORS.wine, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+            >
+              <Eye size={10} /> {povChar.name}
+            </span>
+          )}
+        </div>
       </div>
       <div style={{ display: "flex", flexDirection: "column", flexShrink: 0 }}>
         <button
@@ -4605,7 +4619,8 @@ function ManuscriptPane({ project, editorId, setEditorId, onAdd, onPatch, onDele
         </button>
       </div>
     </div>
-  );
+    );
+  };
 
   // Groups are keyed by chapter, ordered by first appearance in the manuscript
   // (not alphabetically — story order matters more than alphabetical order
@@ -4735,6 +4750,33 @@ function ManuscriptPane({ project, editorId, setEditorId, onAdd, onPatch, onDele
                 </button>
               ))}
             </div>
+            {(() => {
+              const allChars = project.characters || [];
+              const povChar = scene.povCharId ? allChars.find((c) => c.id === scene.povCharId) : null;
+              return (
+                <div style={{ marginTop: 10, marginBottom: 14, maxWidth: 300 }}>
+                  <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: COLORS.inkSoft, marginBottom: 6, display: "flex", alignItems: "center", gap: 4 }}>
+                    <Eye size={11} /> POV
+                  </div>
+                  <select
+                    value={scene.povCharId || ""}
+                    onChange={(e) => onPatch(scene.id, { povCharId: e.target.value })}
+                    style={{ ...getInputStyle(), fontSize: 14 }}
+                  >
+                    <option value="">No POV set</option>
+                    {allChars.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                  {povChar && (
+                    <button
+                      onClick={() => onJumpToCharacter && onJumpToCharacter(povChar.id)}
+                      style={{ display: "inline-flex", alignItems: "center", gap: 4, marginTop: 6, background: "none", border: "none", padding: 0, fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: COLORS.wine, cursor: "pointer", textDecoration: "underline" }}
+                    >
+                      <Users size={11} /> View {povChar.name}'s profile
+                    </button>
+                  )}
+                </div>
+              );
+            })()}
             <div style={{ marginTop: 10, marginBottom: 14, maxWidth: 300 }}>
               <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: COLORS.inkSoft, marginBottom: 6, display: "flex", alignItems: "center", gap: 4 }}>
                 <Folder size={11} /> Chapter (optional)
